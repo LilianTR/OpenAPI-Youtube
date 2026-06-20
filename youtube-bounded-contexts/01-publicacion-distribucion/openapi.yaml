@@ -1,0 +1,735 @@
+openapi: 3.1.0
+info:
+  title: Publicación y Distribución de Contenido
+  version: 1.0.0
+  description: |
+    ## Responsabilidad
+    Gestiona el **ciclo de vida técnico del video**: subida, procesamiento,
+    almacenamiento, reproducción y transmisión en vivo.
+
+    ## Alcance
+    - **Sí:** upload, transcoding, streaming, sesiones de playback, live
+    - **No:** título del video, comentarios, recomendaciones, pagos, campañas
+
+    ## Modelo canónico
+    El "video" en este contexto es un **asset técnico** (archivo/stream), no un
+    producto editorial. No decide si el video es visible al público ni gestiona
+    metadata visible (título, descripción, tags).
+
+    ## Integración con otros contextos
+    - Notifica a **Catálogo** cuando el asset está técnicamente listo para publicar.
+    - Recibe desde clientes/orquestadores solicitudes de reproducción.
+    - Emite sesiones completadas consumidas por **Descubrimiento** como señales.
+
+servers:
+  - url: https://api.youtube-platform.internal/publication/v1
+    description: Servidor interno de Publicación
+
+tags:
+  - name: uploads
+    description: Gestión del ciclo de subida de archivos de video
+  - name: processing
+    description: Estado y control del procesamiento/transcoding
+  - name: playback
+    description: Reproducción de video on-demand
+  - name: live
+    description: Configuración y control de transmisiones en vivo
+  - name: assets
+    description: Consulta de assets técnicos
+
+# ---------------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------------
+paths:
+
+  # ── UPLOADS ──────────────────────────────────────────────────────────────
+
+  /uploads:
+    post:
+      tags: [uploads]
+      operationId: initiateUpload
+      summary: Iniciar una subida de video (RF-P1)
+      description: |
+        Crea una sesión de subida y devuelve un `uploadId` junto con la URL
+        o instrucciones para enviar el archivo. El creador debe estar autenticado.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InitiateUploadRequest'
+      responses:
+        '201':
+          description: Sesión de subida creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /uploads/{uploadId}:
+    parameters:
+      - $ref: '#/components/parameters/uploadId'
+    get:
+      tags: [uploads]
+      operationId: getUploadStatus
+      summary: Consultar estado de progreso de la subida (RF-P1)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Estado actual de la subida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [uploads]
+      operationId: cancelUpload
+      summary: Cancelar una subida en curso (RF-P1)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Subida cancelada exitosamente
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /uploads/{uploadId}/content:
+    parameters:
+      - $ref: '#/components/parameters/uploadId'
+    put:
+      tags: [uploads]
+      operationId: uploadFileChunk
+      summary: Subir archivo completo o por partes (RF-P1)
+      description: |
+        Envía el contenido binario del video. Soporta subida completa o
+        por chunks usando el header `Content-Range`.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      parameters:
+        - in: header
+          name: Content-Range
+          schema:
+            type: string
+          description: 'Rango del chunk (ej: bytes 0-999999/5000000)'
+      responses:
+        '200':
+          description: Chunk recibido; subida en progreso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '201':
+          description: Archivo completo recibido y validado; procesamiento iniciado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ── PROCESSING ───────────────────────────────────────────────────────────
+
+  /assets/{videoAssetId}/processing:
+    parameters:
+      - $ref: '#/components/parameters/videoAssetId'
+    get:
+      tags: [processing]
+      operationId: getProcessingStatus
+      summary: Consultar estado del procesamiento (RF-P2)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Estado del procesamiento
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /assets/{videoAssetId}/processing/retry:
+    parameters:
+      - $ref: '#/components/parameters/videoAssetId'
+    post:
+      tags: [processing]
+      operationId: retryProcessing
+      summary: Reintentar procesamiento fallido (RF-P2)
+      security:
+        - BearerAuth: []
+      responses:
+        '202':
+          description: Reintento encolado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessingStatus'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # ── PLAYBACK ─────────────────────────────────────────────────────────────
+
+  /assets/{videoAssetId}/playback:
+    parameters:
+      - $ref: '#/components/parameters/videoAssetId'
+    get:
+      tags: [playback]
+      operationId: getPlaybackInfo
+      summary: Obtener información de reproducción (RF-P3)
+      description: |
+        Devuelve URLs de stream adaptadas a dispositivo, ancho de banda y región.
+        Inicia internamente una sesión de reproducción.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: deviceType
+          schema:
+            type: string
+            enum: [mobile, desktop, tv, embed]
+        - in: query
+          name: preferredQuality
+          schema:
+            type: string
+            enum: [auto, 360p, 480p, 720p, 1080p, 1440p, 2160p]
+        - in: query
+          name: region
+          schema:
+            type: string
+            description: Código ISO 3166-1 alpha-2
+      responses:
+        '200':
+          description: Información de reproducción
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackInfo'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /playback-sessions/{sessionId}:
+    parameters:
+      - in: path
+        name: sessionId
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [playback]
+      operationId: updatePlaybackSession
+      summary: Registrar progreso o finalización de reproducción (RF-P3)
+      description: |
+        Actualiza la sesión con métricas técnicas: posición actual, calidad usada,
+        interrupciones y evento de finalización.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaybackSessionUpdate'
+      responses:
+        '200':
+          description: Sesión actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlaybackSession'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── LIVE ─────────────────────────────────────────────────────────────────
+
+  /live-streams:
+    post:
+      tags: [live]
+      operationId: createLiveStream
+      summary: Configurar una transmisión en vivo (RF-P4)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLiveStreamRequest'
+      responses:
+        '201':
+          description: Transmisión configurada; incluye credenciales de conexión
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveStream'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /live-streams/{streamId}:
+    parameters:
+      - in: path
+        name: streamId
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [live]
+      operationId: getLiveStream
+      summary: Consultar estado de una transmisión en vivo (RF-P4)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Detalle de la transmisión
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveStream'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /live-streams/{streamId}/state:
+    parameters:
+      - in: path
+        name: streamId
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [live]
+      operationId: updateLiveStreamState
+      summary: Iniciar, pausar o finalizar una transmisión (RF-P4)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [start, pause, end]
+                generateVod:
+                  type: boolean
+                  description: Si es true al hacer end, genera un video on-demand
+                  default: false
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveStream'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  # ── ASSETS ───────────────────────────────────────────────────────────────
+
+  /assets:
+    get:
+      tags: [assets]
+      operationId: listAssets
+      summary: Listar assets técnicos de un creador (RF-P5)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: creatorId
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista paginada de assets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetList'
+
+  /assets/{videoAssetId}:
+    parameters:
+      - $ref: '#/components/parameters/videoAssetId'
+    get:
+      tags: [assets]
+      operationId: getAsset
+      summary: Consultar detalle técnico de un asset (RF-P5)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Detalle del asset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VideoAsset'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token JWT emitido por el servicio de identidad (Google Account)
+
+  parameters:
+    uploadId:
+      in: path
+      name: uploadId
+      required: true
+      schema:
+        type: string
+    videoAssetId:
+      in: path
+      name: videoAssetId
+      required: true
+      schema:
+        type: string
+    page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Solicitud mal formada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Token ausente o inválido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Sin permisos para esta operación
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Operación no válida para el estado actual del recurso
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: UPLOAD_NOT_FOUND
+        message:
+          type: string
+          example: La sesión de subida indicada no existe.
+        details:
+          type: object
+          additionalProperties: true
+
+    # ── Upload ──
+
+    InitiateUploadRequest:
+      type: object
+      required: [creatorId, fileSizeBytes, mimeType]
+      properties:
+        creatorId:
+          type: string
+        fileSizeBytes:
+          type: integer
+          format: int64
+        mimeType:
+          type: string
+          example: video/mp4
+        fileName:
+          type: string
+
+    UploadSession:
+      type: object
+      required: [uploadId, creatorId, status, createdAt]
+      properties:
+        uploadId:
+          type: string
+        creatorId:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, completed, cancelled, failed]
+        bytesReceived:
+          type: integer
+          format: int64
+        totalBytes:
+          type: integer
+          format: int64
+        videoAssetId:
+          type: string
+          description: Disponible solo cuando status=completed
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    # ── Processing ──
+
+    ProcessingStatus:
+      type: object
+      required: [videoAssetId, status]
+      properties:
+        videoAssetId:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        qualities:
+          type: array
+          items:
+            $ref: '#/components/schemas/QualityVariant'
+        errorMessage:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    QualityVariant:
+      type: object
+      required: [label, status]
+      properties:
+        label:
+          type: string
+          example: 1080p
+        bitrate:
+          type: integer
+        status:
+          type: string
+          enum: [pending, ready, failed]
+
+    # ── Asset ──
+
+    VideoAsset:
+      type: object
+      required: [videoAssetId, creatorId, durationSeconds, processingStatus, createdAt]
+      properties:
+        videoAssetId:
+          type: string
+        creatorId:
+          type: string
+        durationSeconds:
+          type: number
+          format: float
+        fileSizeBytes:
+          type: integer
+          format: int64
+        processingStatus:
+          type: string
+          enum: [pending, processing, completed, failed]
+        availableQualities:
+          type: array
+          items:
+            type: string
+          example: [360p, 720p, 1080p]
+        mimeType:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    AssetList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/VideoAsset'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Playback ──
+
+    PlaybackInfo:
+      type: object
+      required: [videoAssetId, sessionId, streams]
+      properties:
+        videoAssetId:
+          type: string
+        sessionId:
+          type: string
+        streams:
+          type: array
+          items:
+            $ref: '#/components/schemas/StreamVariant'
+        expiresAt:
+          type: string
+          format: date-time
+
+    StreamVariant:
+      type: object
+      required: [quality, url, protocol]
+      properties:
+        quality:
+          type: string
+          example: 1080p
+        url:
+          type: string
+          format: uri
+        protocol:
+          type: string
+          enum: [HLS, DASH, MP4]
+        bitrate:
+          type: integer
+
+    PlaybackSessionUpdate:
+      type: object
+      properties:
+        currentPositionSeconds:
+          type: number
+          format: float
+        qualityUsed:
+          type: string
+        bufferingEvents:
+          type: integer
+        event:
+          type: string
+          enum: [progress, completed, abandoned]
+
+    PlaybackSession:
+      type: object
+      required: [sessionId, videoAssetId, userId, startedAt]
+      properties:
+        sessionId:
+          type: string
+        videoAssetId:
+          type: string
+        userId:
+          type: string
+        watchedSeconds:
+          type: number
+          format: float
+        qualityUsed:
+          type: string
+        bufferingEvents:
+          type: integer
+        status:
+          type: string
+          enum: [active, completed, abandoned]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+
+    # ── Live ──
+
+    CreateLiveStreamRequest:
+      type: object
+      required: [creatorId, title]
+      properties:
+        creatorId:
+          type: string
+        title:
+          type: string
+        scheduledStartAt:
+          type: string
+          format: date-time
+
+    LiveStream:
+      type: object
+      required: [streamId, creatorId, status, createdAt]
+      properties:
+        streamId:
+          type: string
+        creatorId:
+          type: string
+        status:
+          type: string
+          enum: [configured, live, paused, ended]
+        rtmpUrl:
+          type: string
+          description: URL RTMP para conectar OBS u otro software
+        streamKey:
+          type: string
+          description: Clave de stream (solo visible al creador propietario)
+        vodAssetId:
+          type: string
+          description: Asset generado al finalizar el live (si aplica)
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+
+    # ── Shared ──
+
+    Pagination:
+      type: object
+      required: [page, pageSize, totalItems]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer

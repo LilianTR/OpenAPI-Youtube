@@ -1,0 +1,625 @@
+openapi: 3.1.0
+info:
+  title: Descubrimiento y Personalización
+  version: 1.0.0
+  description: |
+    ## Responsabilidad
+    Ayudar al usuario a **encontrar contenido relevante**: búsqueda, feeds,
+    recomendaciones, tendencias y ranking.
+
+    ## Alcance
+    - **Sí:** search, home feed, related, trending, señales de ranking
+    - **No:** almacenar comentarios, servir stream, pagar creadores, crear campañas
+
+    ## Modelo canónico
+    El "video" en este contexto es un **candidato de ranking**: una referencia a
+    un `catalogItemId` con señales de relevancia (score, razón de recomendación).
+    No replica metadata completa ni reglas de visibilidad.
+
+    ## Integración con otros contextos
+    - Consume `ContentPublished/Updated/Restricted` de **Catálogo** para indexar o
+      remover ítems.
+    - Consume señales de engagement de **Audiencia** y sesiones de **Publicación**.
+    - Emite `SearchPerformed` y opcionalmente `RecommendationServed` para analytics.
+    - Para validar visibilidad consulta síncronamente a **Catálogo**.
+
+servers:
+  - url: https://api.youtube-platform.internal/discovery/v1
+    description: Servidor interno de Descubrimiento
+
+tags:
+  - name: search
+    description: Búsqueda de contenido y canales
+  - name: feed
+    description: Feed personalizado de inicio
+  - name: related
+    description: Contenido relacionado a un ítem
+  - name: trending
+    description: Tendencias y exploración por categoría
+  - name: signals
+    description: Captura de señales de comportamiento del usuario
+  - name: index
+    description: Indexación interna (uso del sistema)
+
+paths:
+
+  # ── SEARCH ────────────────────────────────────────────────────────────────
+
+  /search:
+    get:
+      tags: [search]
+      operationId: searchContent
+      summary: Buscar contenido por texto libre (RF-D1)
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+          description: Texto de búsqueda libre
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [video, channel, playlist, all]
+            default: all
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [relevance, date, popularity]
+            default: relevance
+        - in: query
+          name: uploadedAfter
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: durationFilter
+          schema:
+            type: string
+            enum: [short, medium, long]
+            description: 'short: <4min, medium: 4-20min, long: >20min'
+        - in: query
+          name: categoryId
+          schema:
+            type: string
+        - in: query
+          name: userId
+          schema:
+            type: string
+          description: Si se provee, personaliza la relevancia
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Resultados de búsqueda
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResults'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /search/suggestions:
+    get:
+      tags: [search]
+      operationId: getSearchSuggestions
+      summary: Sugerencias mientras el usuario escribe (RF-D1)
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+            default: 5
+      responses:
+        '200':
+          description: Lista de sugerencias de búsqueda
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchSuggestions'
+
+  # ── FEED ─────────────────────────────────────────────────────────────────
+
+  /feed:
+    get:
+      tags: [feed]
+      operationId: getPersonalizedFeed
+      summary: Obtener feed de inicio personalizado (RF-D2)
+      description: |
+        Genera o recupera el feed personalizado para un usuario o sesión
+        anónima. Los ítems incluyen la razón interna de recomendación.
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: string
+          description: Si no se provee, se genera un feed genérico
+        - in: query
+          name: sessionId
+          schema:
+            type: string
+          description: Identificador de sesión anónima
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Feed personalizado paginado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedPage'
+
+  # ── RELATED ──────────────────────────────────────────────────────────────
+
+  /catalog-items/{catalogItemId}/related:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    get:
+      tags: [related]
+      operationId: getRelatedContent
+      summary: Obtener videos relacionados a un contenido (RF-D3)
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Lista de ítems relacionados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelatedContentList'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── TRENDING ─────────────────────────────────────────────────────────────
+
+  /trending:
+    get:
+      tags: [trending]
+      operationId: getTrending
+      summary: Contenido trending por región y/o categoría (RF-D4)
+      parameters:
+        - in: query
+          name: region
+          schema:
+            type: string
+            description: Código ISO 3166-1 alpha-2
+        - in: query
+          name: categoryId
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de contenido trending
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendingList'
+
+  /categories:
+    get:
+      tags: [trending]
+      operationId: listCategories
+      summary: Listar categorías disponibles para exploración (RF-D4)
+      responses:
+        '200':
+          description: Lista de categorías
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryList'
+
+  /categories/{categoryId}/content:
+    parameters:
+      - in: path
+        name: categoryId
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [trending]
+      operationId: browseCategoryContent
+      summary: Explorar contenido por categoría (RF-D4)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Contenido de la categoría
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedPage'
+
+  # ── SIGNALS ──────────────────────────────────────────────────────────────
+
+  /signals:
+    post:
+      tags: [signals]
+      operationId: recordSignal
+      summary: Registrar señal de comportamiento del usuario (RF-D5)
+      description: |
+        Registra impresiones, clicks o tiempo de visualización para
+        actualizar el perfil de intereses del usuario.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalEvent'
+      responses:
+        '202':
+          description: Señal recibida y encolada para procesamiento
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /users/{userId}/interest-profile:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [signals]
+      operationId: getUserInterestProfile
+      summary: Consultar perfil de intereses del usuario (RF-D5)
+      description: Uso interno; permite inspeccionar el perfil para debugging.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Perfil de intereses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterestProfile'
+
+  # ── INDEX ─────────────────────────────────────────────────────────────────
+
+  /index/catalog-items:
+    post:
+      tags: [index]
+      operationId: indexCatalogItem
+      summary: Indexar un nuevo ítem de catálogo (RF-D6)
+      description: |
+        Llamado por el sistema al consumir el evento `ContentPublished` de Catálogo.
+        Solo accesible por servicios internos.
+      security:
+        - ServiceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexRequest'
+      responses:
+        '201':
+          description: Ítem indexado
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /index/catalog-items/{catalogItemId}:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    put:
+      tags: [index]
+      operationId: updateIndexedItem
+      summary: Actualizar ítem en el índice (RF-D6)
+      security:
+        - ServiceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexRequest'
+      responses:
+        '200':
+          description: Índice actualizado
+    delete:
+      tags: [index]
+      operationId: removeFromIndex
+      summary: Remover ítem del índice (RF-D6)
+      description: Se llama cuando el contenido se despublica o restringe.
+      security:
+        - ServiceToken: []
+      responses:
+        '204':
+          description: Ítem removido del índice
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ServiceToken:
+      type: http
+      scheme: bearer
+      description: Token de servicio para comunicación inter-contextos
+
+  parameters:
+    catalogItemId:
+      in: path
+      name: catalogItemId
+      required: true
+      schema:
+        type: string
+    page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Solicitud mal formada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    # ── Search ──
+
+    SearchResults:
+      type: object
+      required: [query, items, pagination]
+      properties:
+        query:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RankedItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    SearchSuggestions:
+      type: object
+      required: [query, suggestions]
+      properties:
+        query:
+          type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+
+    # ── Feed ──
+
+    FeedPage:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RankedItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    RankedItem:
+      type: object
+      required: [catalogItemId, type, score]
+      description: |
+        Referencia a un ítem de catálogo con su puntuación de relevancia.
+        Este contexto no replica la metadata editorial completa;
+        los clientes deben enriquecer con datos de Catálogo si es necesario.
+      properties:
+        catalogItemId:
+          type: string
+        channelId:
+          type: string
+        type:
+          type: string
+          enum: [video, channel, playlist]
+        score:
+          type: number
+          format: float
+          description: Puntuación de relevancia interna (0-1)
+        recommendationReason:
+          type: string
+          description: 'Razón interna: "because_you_watched", "trending_in_region", etc.'
+        impressionId:
+          type: string
+          description: ID para registrar la impresión si el usuario hace click
+
+    # ── Related ──
+
+    RelatedContentList:
+      type: object
+      required: [sourceCatalogItemId, items]
+      properties:
+        sourceCatalogItemId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RankedItem'
+
+    # ── Trending ──
+
+    TrendingList:
+      type: object
+      required: [items, pagination]
+      properties:
+        region:
+          type: string
+        categoryId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RankedItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    CategoryList:
+      type: object
+      required: [categories]
+      properties:
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/Category'
+
+    Category:
+      type: object
+      required: [categoryId, name]
+      properties:
+        categoryId:
+          type: string
+        name:
+          type: string
+        iconUrl:
+          type: string
+          format: uri
+
+    # ── Signals ──
+
+    SignalEvent:
+      type: object
+      required: [eventType, catalogItemId]
+      properties:
+        eventType:
+          type: string
+          enum: [impression, click, watch_time, skip]
+        catalogItemId:
+          type: string
+        userId:
+          type: string
+        sessionId:
+          type: string
+        impressionId:
+          type: string
+          description: ID devuelto en el RankedItem para correlación
+        watchedSeconds:
+          type: number
+          format: float
+          description: Obligatorio cuando eventType=watch_time
+        occurredAt:
+          type: string
+          format: date-time
+
+    InterestProfile:
+      type: object
+      required: [userId, updatedAt]
+      properties:
+        userId:
+          type: string
+        topCategories:
+          type: array
+          items:
+            type: object
+            properties:
+              categoryId:
+                type: string
+              weight:
+                type: number
+                format: float
+        topChannels:
+          type: array
+          items:
+            type: object
+            properties:
+              channelId:
+                type: string
+              weight:
+                type: number
+                format: float
+        updatedAt:
+          type: string
+          format: date-time
+
+    # ── Index ──
+
+    IndexRequest:
+      type: object
+      required: [catalogItemId, channelId, title, tags, publishedAt]
+      properties:
+        catalogItemId:
+          type: string
+        channelId:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        categoryId:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+        isMonetizable:
+          type: boolean
+
+    Pagination:
+      type: object
+      required: [page, pageSize, totalItems]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer

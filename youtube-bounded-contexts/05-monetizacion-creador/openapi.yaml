@@ -1,0 +1,979 @@
+openapi: 3.1.0
+info:
+  title: Monetización del Ecosistema Creador
+  version: 1.0.0
+  description: |
+    ## Responsabilidad
+    Gestionar **cómo los creadores ganan dinero**: elegibilidad, revenue share,
+    membresías de canal, propinas, saldo y pagos.
+
+    ## Alcance
+    - **Sí:** elegibilidad, revenue share, membresías, propinas, saldo, payouts,
+      reportes de ganancias
+    - **No:** crear campañas de anunciantes, recomendar videos, procesar video
+
+    ## Modelo canónico
+    El "canal" en este contexto es una **cuenta de negocio** del creador con
+    elegibilidad, saldo y productos monetizables. La "suscripción" aquí es
+    una **membresía de pago** (distinto al follow social de Audiencia).
+
+    ## Integración con otros contextos
+    - Consume `AdRevenueConfirmed` de **Publicidad** para atribuir ingresos.
+    - Consume `ContentPublished/Restricted` de **Catálogo** para actualizar
+      elegibilidad.
+    - Emite `MonetizationEnabled/Disabled`, `RevenueAttributed`, `PaymentProcessed`.
+
+servers:
+  - url: https://api.youtube-platform.internal/monetization/v1
+    description: Servidor interno de Monetización
+
+tags:
+  - name: eligibility
+    description: Alta y estado de elegibilidad del creador
+  - name: products
+    description: Membresías y propinas configuradas por el creador
+  - name: revenue
+    description: Registro y consulta de ingresos
+  - name: earnings
+    description: Reportes de ganancias para el creador
+  - name: payouts
+    description: Saldo y retiros del creador
+
+paths:
+
+  # ── ELIGIBILITY ───────────────────────────────────────────────────────────
+
+  /monetization-accounts:
+    post:
+      tags: [eligibility]
+      operationId: applyForMonetization
+      summary: Solicitar monetización de un canal (RF-M1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MonetizationApplicationRequest'
+      responses:
+        '201':
+          description: Solicitud recibida; evaluación en curso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonetizationAccount'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /monetization-accounts/{channelId}:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [eligibility]
+      operationId: getMonetizationAccount
+      summary: Consultar estado de elegibilidad y cuenta (RF-M1)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Estado de la cuenta de monetización
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonetizationAccount'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /monetization-accounts/{channelId}/status:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    put:
+      tags: [eligibility]
+      operationId: setMonetizationStatus
+      summary: Activar o desactivar monetización (a nivel canal) (RF-M1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonetizationAccount'
+
+  /catalog-items/{catalogItemId}/monetization:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    get:
+      tags: [eligibility]
+      operationId: getContentMonetizationStatus
+      summary: Consultar estado de monetización de un contenido (RF-M1)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Estado de monetización del contenido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentMonetizationStatus'
+    put:
+      tags: [eligibility]
+      operationId: setContentMonetizationStatus
+      summary: Activar o desactivar monetización de un contenido (RF-M1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentMonetizationStatus'
+
+  # ── PRODUCTS ──────────────────────────────────────────────────────────────
+
+  /channels/{channelId}/membership-tiers:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    post:
+      tags: [products]
+      operationId: createMembershipTier
+      summary: Crear nivel de membresía de canal (RF-M2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMembershipTierRequest'
+      responses:
+        '201':
+          description: Nivel creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembershipTier'
+    get:
+      tags: [products]
+      operationId: listMembershipTiers
+      summary: Listar niveles de membresía de un canal (RF-M2)
+      responses:
+        '200':
+          description: Lista de niveles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MembershipTier'
+
+  /channels/{channelId}/membership-tiers/{tierId}:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+      - in: path
+        name: tierId
+        required: true
+        schema:
+          type: string
+    patch:
+      tags: [products]
+      operationId: updateMembershipTier
+      summary: Actualizar nivel de membresía (RF-M2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMembershipTierRequest'
+      responses:
+        '200':
+          description: Nivel actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembershipTier'
+
+  /memberships:
+    post:
+      tags: [products]
+      operationId: purchaseMembership
+      summary: Registrar compra de membresía por un espectador (RF-M2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseMembershipRequest'
+      responses:
+        '201':
+          description: Membresía registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembershipPurchase'
+
+  /catalog-items/{catalogItemId}/super-thanks:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    post:
+      tags: [products]
+      operationId: recordSuperThanks
+      summary: Registrar propina/agradecimiento en un video (RF-M2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuperThanksRequest'
+      responses:
+        '201':
+          description: Propina registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueEvent'
+
+  # ── REVENUE ───────────────────────────────────────────────────────────────
+
+  /revenue-events:
+    post:
+      tags: [revenue]
+      operationId: recordRevenueEvent
+      summary: Registrar evento de ingreso (uso interno / inter-contexto) (RF-M3)
+      description: |
+        Endpoint interno consumido por el sistema al recibir un evento de
+        ingreso publicitario confirmado desde **Publicidad**, o tras una
+        membresía/propina procesada.
+      security:
+        - ServiceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevenueEventRequest'
+      responses:
+        '201':
+          description: Evento registrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueEvent'
+
+  /channels/{channelId}/revenue-events:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [revenue]
+      operationId: listChannelRevenueEvents
+      summary: Listar eventos de ingreso de un canal (RF-M3)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, confirmed, paid]
+        - in: query
+          name: fromDate
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: toDate
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de eventos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueEventList'
+
+  # ── EARNINGS ──────────────────────────────────────────────────────────────
+
+  /channels/{channelId}/earnings:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [earnings]
+      operationId: getEarningsSummary
+      summary: Consultar ganancias por período (RF-M4)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: period
+          required: true
+          schema:
+            type: string
+            enum: [day, week, month, year]
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Resumen de ganancias
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EarningsSummary'
+
+  /channels/{channelId}/earnings/by-content:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [earnings]
+      operationId: getEarningsByContent
+      summary: Desglose de ganancias por video y fuente (RF-M4)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Desglose por contenido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EarningsByContentList'
+
+  /channels/{channelId}/earnings/report:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [earnings]
+      operationId: exportEarningsReport
+      summary: Exportar reporte de ganancias (RF-M4)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [csv, json]
+            default: csv
+      responses:
+        '200':
+          description: Reporte exportable
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EarningsSummary'
+
+  # ── PAYOUTS ───────────────────────────────────────────────────────────────
+
+  /channels/{channelId}/balance:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [payouts]
+      operationId: getCreatorBalance
+      summary: Consultar saldo disponible del creador (RF-M5)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Saldo actual
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatorBalance'
+
+  /channels/{channelId}/payout-requests:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    post:
+      tags: [payouts]
+      operationId: requestPayout
+      summary: Solicitar retiro cuando se supere el mínimo (RF-M5)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayoutRequest'
+      responses:
+        '201':
+          description: Solicitud de retiro creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payout'
+        '422':
+          description: Saldo insuficiente para el mínimo de retiro
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [payouts]
+      operationId: listPayouts
+      summary: Historial de pagos realizados (RF-M5)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de pagos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayoutList'
+
+  /channels/{channelId}/tax-documents:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [payouts]
+      operationId: listTaxDocuments
+      summary: Listar documentos fiscales del creador (RF-M5)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Lista de documentos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TaxDocument'
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ServiceToken:
+      type: http
+      scheme: bearer
+      description: Token de servicio para comunicación inter-contextos
+
+  parameters:
+    channelId:
+      in: path
+      name: channelId
+      required: true
+      schema:
+        type: string
+    catalogItemId:
+      in: path
+      name: catalogItemId
+      required: true
+      schema:
+        type: string
+    page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Solicitud mal formada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Recurso ya existente
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    # ── Eligibility ──
+
+    MonetizationApplicationRequest:
+      type: object
+      required: [channelId, creatorId]
+      properties:
+        channelId:
+          type: string
+        creatorId:
+          type: string
+
+    MonetizationAccount:
+      type: object
+      required: [channelId, eligibilityStatus, monetizationEnabled, createdAt]
+      properties:
+        channelId:
+          type: string
+        eligibilityStatus:
+          type: string
+          enum: [pending, eligible, ineligible, suspended]
+        monetizationEnabled:
+          type: boolean
+        eligibilityCriteria:
+          type: object
+          properties:
+            subscriberCount:
+              type: integer
+            watchHoursLast12Months:
+              type: number
+            policyCompliant:
+              type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContentMonetizationStatus:
+      type: object
+      required: [catalogItemId, channelId, monetizationEnabled]
+      properties:
+        catalogItemId:
+          type: string
+        channelId:
+          type: string
+        monetizationEnabled:
+          type: boolean
+        disabledReason:
+          type: string
+          description: Razón si monetizationEnabled=false
+
+    # ── Products ──
+
+    CreateMembershipTierRequest:
+      type: object
+      required: [name, priceAmount, priceCurrency]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        priceAmount:
+          type: number
+          format: float
+        priceCurrency:
+          type: string
+          example: USD
+        benefits:
+          type: array
+          items:
+            type: string
+
+    UpdateMembershipTierRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        benefits:
+          type: array
+          items:
+            type: string
+
+    MembershipTier:
+      type: object
+      required: [tierId, channelId, name, priceAmount, priceCurrency, active]
+      properties:
+        tierId:
+          type: string
+        channelId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        priceAmount:
+          type: number
+          format: float
+        priceCurrency:
+          type: string
+        benefits:
+          type: array
+          items:
+            type: string
+        active:
+          type: boolean
+
+    PurchaseMembershipRequest:
+      type: object
+      required: [userId, channelId, tierId]
+      properties:
+        userId:
+          type: string
+        channelId:
+          type: string
+        tierId:
+          type: string
+
+    MembershipPurchase:
+      type: object
+      required: [purchaseId, userId, channelId, tierId, purchasedAt]
+      properties:
+        purchaseId:
+          type: string
+        userId:
+          type: string
+        channelId:
+          type: string
+        tierId:
+          type: string
+        purchasedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    SuperThanksRequest:
+      type: object
+      required: [userId, amountCents, currency]
+      properties:
+        userId:
+          type: string
+        amountCents:
+          type: integer
+        currency:
+          type: string
+          example: USD
+        message:
+          type: string
+
+    # ── Revenue ──
+
+    RevenueEventRequest:
+      type: object
+      required: [channelId, source, grossAmountCents, currency]
+      properties:
+        channelId:
+          type: string
+        catalogItemId:
+          type: string
+        source:
+          type: string
+          enum: [ad_revenue, membership, super_thanks]
+        grossAmountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        externalReferenceId:
+          type: string
+          description: ID de la impresión o compra en el contexto de origen
+
+    RevenueEvent:
+      type: object
+      required: [revenueEventId, channelId, source, grossAmountCents, netAmountCents, currency, status, occurredAt]
+      properties:
+        revenueEventId:
+          type: string
+        channelId:
+          type: string
+        catalogItemId:
+          type: string
+        source:
+          type: string
+          enum: [ad_revenue, membership, super_thanks]
+        grossAmountCents:
+          type: integer
+          format: int64
+        netAmountCents:
+          type: integer
+          format: int64
+          description: Luego de aplicar revenue share
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [pending, confirmed, paid]
+        externalReferenceId:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+
+    RevenueEventList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RevenueEvent'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Earnings ──
+
+    EarningsSummary:
+      type: object
+      required: [channelId, from, to, totalGrossCents, totalNetCents, currency]
+      properties:
+        channelId:
+          type: string
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        totalGrossCents:
+          type: integer
+          format: int64
+        totalNetCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        bySource:
+          type: object
+          properties:
+            adRevenue:
+              type: integer
+              format: int64
+            memberships:
+              type: integer
+              format: int64
+            superThanks:
+              type: integer
+              format: int64
+        rpm:
+          type: number
+          format: float
+          description: Revenue per mille (por mil vistas)
+
+    EarningsByContentItem:
+      type: object
+      required: [catalogItemId, netAmountCents, currency]
+      properties:
+        catalogItemId:
+          type: string
+        netAmountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        adRevenueCents:
+          type: integer
+          format: int64
+        membershipRevenueCents:
+          type: integer
+          format: int64
+        rpm:
+          type: number
+          format: float
+
+    EarningsByContentList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EarningsByContentItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Payouts ──
+
+    CreatorBalance:
+      type: object
+      required: [channelId, availableAmountCents, currency, minimumPayoutCents]
+      properties:
+        channelId:
+          type: string
+        availableAmountCents:
+          type: integer
+          format: int64
+        pendingAmountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        minimumPayoutCents:
+          type: integer
+          format: int64
+
+    PayoutRequest:
+      type: object
+      required: [amountCents, currency]
+      properties:
+        amountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+
+    Payout:
+      type: object
+      required: [payoutId, channelId, amountCents, currency, status, requestedAt]
+      properties:
+        payoutId:
+          type: string
+        channelId:
+          type: string
+        amountCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, paid, failed]
+        requestedAt:
+          type: string
+          format: date-time
+        paidAt:
+          type: string
+          format: date-time
+
+    PayoutList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payout'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    TaxDocument:
+      type: object
+      required: [documentId, type, year, url]
+      properties:
+        documentId:
+          type: string
+        type:
+          type: string
+          example: 1099-K
+        year:
+          type: integer
+        url:
+          type: string
+          format: uri
+
+    Pagination:
+      type: object
+      required: [page, pageSize, totalItems]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer

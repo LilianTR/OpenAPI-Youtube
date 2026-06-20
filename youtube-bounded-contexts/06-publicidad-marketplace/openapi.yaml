@@ -1,0 +1,1095 @@
+openapi: 3.1.0
+info:
+  title: Publicidad y Marketplace de Anunciantes
+  version: 1.0.0
+  description: |
+    ## Responsabilidad
+    Gestionar el **negocio publicitario B2B**: campañas, inventario, targeting,
+    entrega de anuncios e ingresos para la plataforma.
+
+    ## Alcance
+    - **Sí:** anunciantes, campañas, creativos, decisiones de ad, impresiones,
+      billing
+    - **No:** pagar al creador directamente (eso es Monetización), comentarios,
+      recomendaciones
+
+    ## Modelo canónico
+    El "video" aquí es un **slot publicitario**: un espacio de inventario con
+    atributos de targeting (categoría, región, audiencia). El cliente principal
+    es el **anunciante**, no el creador.
+
+    ## Integración con otros contextos
+    - Consume `ContentPublished/Restricted` de **Catálogo** para mantener el
+      inventario publicitario actualizado.
+    - Consume señales de Audiencia/Descubrimiento para brand safety.
+    - Emite `AdServed`, `BillableImpressionConfirmed`, `AdRevenueGenerated`
+      (consumido por **Monetización**), `CampaignBudgetExhausted`.
+
+servers:
+  - url: https://api.youtube-platform.internal/advertising/v1
+    description: Servidor interno de Publicidad
+
+tags:
+  - name: advertisers
+    description: Cuentas de anunciantes y datos de facturación
+  - name: campaigns
+    description: Campañas publicitarias
+  - name: creatives
+    description: Creativos publicitarios
+  - name: targeting
+    description: Segmentación y estimación de inventario
+  - name: inventory
+    description: Inventario publicitario disponible
+  - name: ad-serving
+    description: Decisión y entrega de anuncios
+  - name: measurement
+    description: Impresiones, clicks y métricas de campaña
+  - name: reporting
+    description: Reportes e invoices para anunciantes
+
+paths:
+
+  # ── ADVERTISERS ───────────────────────────────────────────────────────────
+
+  /advertisers:
+    post:
+      tags: [advertisers]
+      operationId: createAdvertiser
+      summary: Registrar cuenta de anunciante (RF-F1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAdvertiserRequest'
+      responses:
+        '201':
+          description: Cuenta de anunciante creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Advertiser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /advertisers/{advertiserId}:
+    parameters:
+      - $ref: '#/components/parameters/advertiserId'
+    get:
+      tags: [advertisers]
+      operationId: getAdvertiser
+      summary: Consultar cuenta de anunciante (RF-F1)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Cuenta del anunciante
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Advertiser'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [advertisers]
+      operationId: updateAdvertiser
+      summary: Actualizar datos del anunciante (RF-F1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAdvertiserRequest'
+      responses:
+        '200':
+          description: Anunciante actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Advertiser'
+
+  /advertisers/{advertiserId}/billing:
+    parameters:
+      - $ref: '#/components/parameters/advertiserId'
+    get:
+      tags: [advertisers]
+      operationId: getAdvertiserBilling
+      summary: Consultar datos de facturación del anunciante (RF-F1)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Datos de facturación
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingInfo'
+    put:
+      tags: [advertisers]
+      operationId: updateAdvertiserBilling
+      summary: Actualizar datos de facturación (RF-F1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BillingInfo'
+      responses:
+        '200':
+          description: Datos actualizados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingInfo'
+
+  # ── CAMPAIGNS ─────────────────────────────────────────────────────────────
+
+  /advertisers/{advertiserId}/campaigns:
+    parameters:
+      - $ref: '#/components/parameters/advertiserId'
+    post:
+      tags: [campaigns]
+      operationId: createCampaign
+      summary: Crear campaña publicitaria (RF-F2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCampaignRequest'
+      responses:
+        '201':
+          description: Campaña creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+    get:
+      tags: [campaigns]
+      operationId: listCampaigns
+      summary: Listar campañas de un anunciante
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, active, paused, ended, budget_exhausted]
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de campañas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignList'
+
+  /campaigns/{campaignId}:
+    parameters:
+      - $ref: '#/components/parameters/campaignId'
+    get:
+      tags: [campaigns]
+      operationId: getCampaign
+      summary: Consultar campaña
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Campaña
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /campaigns/{campaignId}/state:
+    parameters:
+      - $ref: '#/components/parameters/campaignId'
+    put:
+      tags: [campaigns]
+      operationId: updateCampaignState
+      summary: Pausar, reanudar o finalizar campaña (RF-F2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action:
+                  type: string
+                  enum: [pause, resume, end]
+      responses:
+        '200':
+          description: Estado actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+
+  # ── CREATIVES ─────────────────────────────────────────────────────────────
+
+  /advertisers/{advertiserId}/creatives:
+    parameters:
+      - $ref: '#/components/parameters/advertiserId'
+    post:
+      tags: [creatives]
+      operationId: registerCreative
+      summary: Subir y registrar creativo publicitario (RF-F3)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCreativeRequest'
+      responses:
+        '201':
+          description: Creativo registrado; validación en curso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Creative'
+    get:
+      tags: [creatives]
+      operationId: listCreatives
+      summary: Listar creativos del anunciante
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de creativos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreativeList'
+
+  /campaigns/{campaignId}/creatives:
+    parameters:
+      - $ref: '#/components/parameters/campaignId'
+    post:
+      tags: [creatives]
+      operationId: associateCreativeToCampaign
+      summary: Asociar creativo a una campaña (RF-F3)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [creativeId]
+              properties:
+                creativeId:
+                  type: string
+      responses:
+        '200':
+          description: Creativo asociado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+
+  # ── TARGETING ─────────────────────────────────────────────────────────────
+
+  /campaigns/{campaignId}/targeting:
+    parameters:
+      - $ref: '#/components/parameters/campaignId'
+    get:
+      tags: [targeting]
+      operationId: getCampaignTargeting
+      summary: Consultar criterios de targeting de la campaña (RF-F4)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Criterios de targeting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TargetingCriteria'
+    put:
+      tags: [targeting]
+      operationId: updateCampaignTargeting
+      summary: Definir o actualizar criterios de segmentación (RF-F4)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TargetingCriteria'
+      responses:
+        '200':
+          description: Targeting actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TargetingCriteria'
+
+  /targeting/inventory-estimate:
+    post:
+      tags: [targeting]
+      operationId: estimateInventory
+      summary: Estimar inventario disponible para un targeting dado (RF-F4)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TargetingCriteria'
+      responses:
+        '200':
+          description: Estimación de inventario
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InventoryEstimate'
+
+  # ── INVENTORY ─────────────────────────────────────────────────────────────
+
+  /inventory/eligible-slots:
+    get:
+      tags: [inventory]
+      operationId: listEligibleSlots
+      summary: Listar contenidos elegibles para mostrar anuncios (RF-F5)
+      description: |
+        Uso interno. Consulta contenidos que tienen monetización habilitada y
+        no tienen restricciones del catálogo que bloqueen publicidad.
+      security:
+        - ServiceToken: []
+      parameters:
+        - in: query
+          name: categoryId
+          schema:
+            type: string
+        - in: query
+          name: region
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Slots elegibles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EligibleSlotList'
+
+  /inventory/catalog-items/{catalogItemId}/eligibility:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    put:
+      tags: [inventory]
+      operationId: updateInventoryEligibility
+      summary: Actualizar elegibilidad de un contenido en inventario (RF-F5)
+      description: |
+        Llamado por el sistema al consumir eventos de Catálogo (publicado,
+        restringido, despublicado). Solo acceso de servicio.
+      security:
+        - ServiceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eligible]
+              properties:
+                eligible:
+                  type: boolean
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Elegibilidad actualizada
+
+  # ── AD SERVING ────────────────────────────────────────────────────────────
+
+  /ad-decisions:
+    post:
+      tags: [ad-serving]
+      operationId: requestAdDecision
+      summary: Decidir qué anuncio mostrar ante una oportunidad (RF-F6)
+      description: |
+        Llamado por el cliente de reproducción cuando hay una oportunidad
+        publicitaria (pre-roll, mid-roll, display). El sistema evalúa campañas
+        activas, targeting, subasta/prioridad y brand safety para decidir qué
+        anuncio servir, o si no servir ninguno.
+      security:
+        - ServiceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdOpportunity'
+      responses:
+        '200':
+          description: Decisión tomada (puede ser no servir anuncio)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdDecision'
+
+  # ── MEASUREMENT ───────────────────────────────────────────────────────────
+
+  /ad-events:
+    post:
+      tags: [measurement]
+      operationId: recordAdEvent
+      summary: Registrar impresión, click o skip de un anuncio (RF-F7)
+      security:
+        - ServiceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdEventRequest'
+      responses:
+        '202':
+          description: Evento recibido y encolado
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ── REPORTING ─────────────────────────────────────────────────────────────
+
+  /campaigns/{campaignId}/metrics:
+    parameters:
+      - $ref: '#/components/parameters/campaignId'
+    get:
+      tags: [reporting]
+      operationId: getCampaignMetrics
+      summary: Obtener métricas de campaña (RF-F8)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: true
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: granularity
+          schema:
+            type: string
+            enum: [day, week, month, total]
+            default: total
+      responses:
+        '200':
+          description: Métricas de la campaña
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CampaignMetrics'
+
+  /advertisers/{advertiserId}/invoices:
+    parameters:
+      - $ref: '#/components/parameters/advertiserId'
+    get:
+      tags: [reporting]
+      operationId: listAdvertiserInvoices
+      summary: Listar invoices del anunciante (RF-F8)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de invoices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvoiceList'
+
+  /advertisers/{advertiserId}/invoices/{invoiceId}/download:
+    parameters:
+      - $ref: '#/components/parameters/advertiserId'
+      - in: path
+        name: invoiceId
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [reporting]
+      operationId: downloadInvoice
+      summary: Descargar invoice en PDF (RF-F8)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Archivo PDF del invoice
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ServiceToken:
+      type: http
+      scheme: bearer
+      description: Token de servicio para comunicación inter-contextos
+
+  parameters:
+    advertiserId:
+      in: path
+      name: advertiserId
+      required: true
+      schema:
+        type: string
+    campaignId:
+      in: path
+      name: campaignId
+      required: true
+      schema:
+        type: string
+    catalogItemId:
+      in: path
+      name: catalogItemId
+      required: true
+      schema:
+        type: string
+    page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Solicitud mal formada
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    # ── Advertiser ──
+
+    CreateAdvertiserRequest:
+      type: object
+      required: [companyName, contactEmail]
+      properties:
+        companyName:
+          type: string
+        contactEmail:
+          type: string
+          format: email
+        website:
+          type: string
+          format: uri
+
+    UpdateAdvertiserRequest:
+      type: object
+      properties:
+        companyName:
+          type: string
+        contactEmail:
+          type: string
+          format: email
+        website:
+          type: string
+          format: uri
+
+    Advertiser:
+      type: object
+      required: [advertiserId, companyName, contactEmail, status, createdAt]
+      properties:
+        advertiserId:
+          type: string
+        companyName:
+          type: string
+        contactEmail:
+          type: string
+          format: email
+        website:
+          type: string
+          format: uri
+        status:
+          type: string
+          enum: [active, suspended, pending_verification]
+        createdAt:
+          type: string
+          format: date-time
+
+    BillingInfo:
+      type: object
+      properties:
+        legalName:
+          type: string
+        taxId:
+          type: string
+        address:
+          type: string
+        paymentMethod:
+          type: string
+          enum: [credit_card, bank_transfer, prepaid]
+        currency:
+          type: string
+          example: USD
+
+    # ── Campaign ──
+
+    CreateCampaignRequest:
+      type: object
+      required: [name, objective, budgetCents, currency, startDate, endDate]
+      properties:
+        name:
+          type: string
+        objective:
+          type: string
+          enum: [awareness, consideration, conversion]
+        budgetCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+          example: USD
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+
+    Campaign:
+      type: object
+      required: [campaignId, advertiserId, name, objective, budgetCents, spentCents, currency, status, startDate, endDate, createdAt]
+      properties:
+        campaignId:
+          type: string
+        advertiserId:
+          type: string
+        name:
+          type: string
+        objective:
+          type: string
+          enum: [awareness, consideration, conversion]
+        budgetCents:
+          type: integer
+          format: int64
+        spentCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [draft, active, paused, ended, budget_exhausted]
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        creativeIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CampaignList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Campaign'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Creative ──
+
+    CreateCreativeRequest:
+      type: object
+      required: [name, format, assetUrl]
+      properties:
+        name:
+          type: string
+        format:
+          type: string
+          enum: [pre_roll, mid_roll, display, bumper]
+        assetUrl:
+          type: string
+          format: uri
+        clickThroughUrl:
+          type: string
+          format: uri
+        durationSeconds:
+          type: integer
+
+    Creative:
+      type: object
+      required: [creativeId, advertiserId, name, format, assetUrl, validationStatus, createdAt]
+      properties:
+        creativeId:
+          type: string
+        advertiserId:
+          type: string
+        name:
+          type: string
+        format:
+          type: string
+          enum: [pre_roll, mid_roll, display, bumper]
+        assetUrl:
+          type: string
+          format: uri
+        clickThroughUrl:
+          type: string
+          format: uri
+        durationSeconds:
+          type: integer
+        validationStatus:
+          type: string
+          enum: [pending, approved, rejected]
+        rejectionReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CreativeList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Creative'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Targeting ──
+
+    TargetingCriteria:
+      type: object
+      properties:
+        countries:
+          type: array
+          items:
+            type: string
+          description: Códigos ISO 3166-1 alpha-2
+        minAgeYears:
+          type: integer
+        maxAgeYears:
+          type: integer
+        interests:
+          type: array
+          items:
+            type: string
+        categoryIds:
+          type: array
+          items:
+            type: string
+        excludedCategoryIds:
+          type: array
+          items:
+            type: string
+          description: Brand safety — categorías excluidas
+        deviceTypes:
+          type: array
+          items:
+            type: string
+            enum: [mobile, desktop, tv]
+        adFormats:
+          type: array
+          items:
+            type: string
+            enum: [pre_roll, mid_roll, display, bumper]
+
+    InventoryEstimate:
+      type: object
+      required: [estimatedImpressions, estimatedReach]
+      properties:
+        estimatedImpressions:
+          type: integer
+          format: int64
+        estimatedReach:
+          type: integer
+          format: int64
+        confidenceLevel:
+          type: string
+          enum: [low, medium, high]
+
+    # ── Inventory ──
+
+    EligibleSlot:
+      type: object
+      required: [catalogItemId, channelId]
+      properties:
+        catalogItemId:
+          type: string
+        channelId:
+          type: string
+        categoryId:
+          type: string
+        region:
+          type: string
+        availableFormats:
+          type: array
+          items:
+            type: string
+            enum: [pre_roll, mid_roll, display, bumper]
+
+    EligibleSlotList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EligibleSlot'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Ad Serving ──
+
+    AdOpportunity:
+      type: object
+      required: [catalogItemId, format, userId]
+      properties:
+        catalogItemId:
+          type: string
+        format:
+          type: string
+          enum: [pre_roll, mid_roll, display, bumper]
+        userId:
+          type: string
+        sessionId:
+          type: string
+        userCountry:
+          type: string
+        userAgeYears:
+          type: integer
+        deviceType:
+          type: string
+          enum: [mobile, desktop, tv]
+
+    AdDecision:
+      type: object
+      required: [decisionId, adServed]
+      properties:
+        decisionId:
+          type: string
+        adServed:
+          type: boolean
+          description: false si no hubo campaña elegible
+        campaignId:
+          type: string
+        creativeId:
+          type: string
+        creative:
+          $ref: '#/components/schemas/AdCreativePayload'
+        isSkippable:
+          type: boolean
+        skipAfterSeconds:
+          type: integer
+
+    AdCreativePayload:
+      type: object
+      required: [format, assetUrl]
+      properties:
+        format:
+          type: string
+          enum: [pre_roll, mid_roll, display, bumper]
+        assetUrl:
+          type: string
+          format: uri
+        clickThroughUrl:
+          type: string
+          format: uri
+        durationSeconds:
+          type: integer
+
+    # ── Measurement ──
+
+    AdEventRequest:
+      type: object
+      required: [decisionId, eventType]
+      properties:
+        decisionId:
+          type: string
+        eventType:
+          type: string
+          enum: [impression, click, skip, complete]
+        occurredAt:
+          type: string
+          format: date-time
+
+    # ── Metrics / Reporting ──
+
+    CampaignMetrics:
+      type: object
+      required: [campaignId, from, to, impressions, clicks, spentCents, currency]
+      properties:
+        campaignId:
+          type: string
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        impressions:
+          type: integer
+          format: int64
+        clicks:
+          type: integer
+          format: int64
+        skips:
+          type: integer
+          format: int64
+        completions:
+          type: integer
+          format: int64
+        ctr:
+          type: number
+          format: float
+          description: Click-through rate (clicks / impressions)
+        cpm:
+          type: number
+          format: float
+          description: Costo por mil impresiones
+        spentCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        byDay:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              impressions:
+                type: integer
+              clicks:
+                type: integer
+              spentCents:
+                type: integer
+
+    Invoice:
+      type: object
+      required: [invoiceId, advertiserId, periodFrom, periodTo, totalCents, currency, status, issuedAt]
+      properties:
+        invoiceId:
+          type: string
+        advertiserId:
+          type: string
+        periodFrom:
+          type: string
+          format: date
+        periodTo:
+          type: string
+          format: date
+        totalCents:
+          type: integer
+          format: int64
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [draft, issued, paid, overdue]
+        issuedAt:
+          type: string
+          format: date-time
+        paidAt:
+          type: string
+          format: date-time
+
+    InvoiceList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Invoice'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      required: [page, pageSize, totalItems]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer

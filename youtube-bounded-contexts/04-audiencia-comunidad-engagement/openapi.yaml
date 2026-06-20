@@ -1,0 +1,949 @@
+openapi: 3.1.0
+info:
+  title: Audiencia, Comunidad y Engagement
+  version: 1.0.0
+  description: |
+    ## Responsabilidad
+    Gestionar la **relación social** entre usuarios, creadores y contenido.
+
+    ## Alcance
+    - **Sí:** suscripciones, likes, comentarios, notificaciones, historial personal,
+      community posts
+    - **No:** ranking del home, metadata editorial, transcoding, pagos
+
+    ## Modelo canónico
+    El "usuario" aquí es un **miembro de comunidad** con relaciones sociales
+    (sigue canales, reacciona, comenta). La "suscripción" es una relación social,
+    no un pago (Premium va en Monetización).
+
+    ## Integración con otros contextos
+    - Emite señales de engagement consumidas por **Descubrimiento**.
+    - Consume `ContentPublished` de **Catálogo** para notificar suscriptores.
+    - Consume cambios de visibilidad de **Catálogo** para ocultar interacciones.
+
+servers:
+  - url: https://api.youtube-platform.internal/audience/v1
+    description: Servidor interno de Audiencia
+
+tags:
+  - name: subscriptions
+    description: Suscripciones sociales a canales
+  - name: reactions
+    description: Likes y dislikes en contenido
+  - name: comments
+    description: Comentarios y respuestas en contenido
+  - name: notifications
+    description: Notificaciones y preferencias
+  - name: history
+    description: Historial de visualización y listas personales
+  - name: community
+    description: Posts de comunidad del canal
+
+paths:
+
+  # ── SUBSCRIPTIONS ─────────────────────────────────────────────────────────
+
+  /subscriptions:
+    post:
+      tags: [subscriptions]
+      operationId: subscribeToChannel
+      summary: Suscribirse a un canal (RF-A1)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channelId]
+              properties:
+                channelId:
+                  type: string
+      responses:
+        '201':
+          description: Suscripción creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /subscriptions/{channelId}:
+    parameters:
+      - in: path
+        name: channelId
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [subscriptions]
+      operationId: unsubscribeFromChannel
+      summary: Dejar de seguir un canal (RF-A1)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Suscripción eliminada
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{userId}/subscriptions:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    get:
+      tags: [subscriptions]
+      operationId: listUserSubscriptions
+      summary: Listar canales seguidos por un usuario (RF-A1)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de suscripciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionList'
+
+  /channels/{channelId}/subscriber-count:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    get:
+      tags: [subscriptions]
+      operationId: getSubscriberCount
+      summary: Obtener conteo de suscriptores de un canal (RF-A1)
+      responses:
+        '200':
+          description: Conteo de suscriptores
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriberCount'
+
+  # ── REACTIONS ─────────────────────────────────────────────────────────────
+
+  /catalog-items/{catalogItemId}/reactions:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    get:
+      tags: [reactions]
+      operationId: getReactionTotals
+      summary: Obtener totales de reacciones (RF-A2)
+      responses:
+        '200':
+          description: Totales agregados de reacciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReactionTotals'
+    put:
+      tags: [reactions]
+      operationId: setReaction
+      summary: Expresar o cambiar reacción a un contenido (RF-A2)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reactionType]
+              properties:
+                reactionType:
+                  type: string
+                  enum: [like, dislike]
+      responses:
+        '200':
+          description: Reacción registrada o actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserReaction'
+    delete:
+      tags: [reactions]
+      operationId: removeReaction
+      summary: Eliminar reacción previa (RF-A2)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Reacción eliminada
+
+  # ── COMMENTS ─────────────────────────────────────────────────────────────
+
+  /catalog-items/{catalogItemId}/comments:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    post:
+      tags: [comments]
+      operationId: createComment
+      summary: Publicar comentario en un contenido (RF-A3)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Comentario creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+    get:
+      tags: [comments]
+      operationId: listComments
+      summary: Listar comentarios de un contenido (RF-A3)
+      parameters:
+        - in: query
+          name: sortBy
+          schema:
+            type: string
+            enum: [recent, top]
+            default: top
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de comentarios
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentList'
+
+  /comments/{commentId}:
+    parameters:
+      - $ref: '#/components/parameters/commentId'
+    patch:
+      tags: [comments]
+      operationId: updateComment
+      summary: Editar un comentario propio (RF-A3)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                  maxLength: 10000
+      responses:
+        '200':
+          description: Comentario actualizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+    delete:
+      tags: [comments]
+      operationId: deleteComment
+      summary: Eliminar un comentario (RF-A3)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Comentario eliminado
+
+  /comments/{commentId}/replies:
+    parameters:
+      - $ref: '#/components/parameters/commentId'
+    post:
+      tags: [comments]
+      operationId: replyToComment
+      summary: Responder a un comentario (RF-A3)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Respuesta creada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+    get:
+      tags: [comments]
+      operationId: listCommentReplies
+      summary: Listar respuestas de un comentario (RF-A3)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de respuestas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentList'
+
+  /comments/{commentId}/pin:
+    parameters:
+      - $ref: '#/components/parameters/commentId'
+    post:
+      tags: [comments]
+      operationId: pinComment
+      summary: Fijar un comentario destacado (solo creador del canal) (RF-A3)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Comentario fijado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+    delete:
+      tags: [comments]
+      operationId: unpinComment
+      summary: Desfijar comentario (RF-A3)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Comentario desfijado
+
+  /comments/{commentId}/report:
+    parameters:
+      - $ref: '#/components/parameters/commentId'
+    post:
+      tags: [comments]
+      operationId: reportComment
+      summary: Reportar comentario inapropiado (RF-A3)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  enum: [spam, hate_speech, harassment, misinformation, other]
+      responses:
+        '202':
+          description: Reporte recibido
+
+  # ── NOTIFICATIONS ─────────────────────────────────────────────────────────
+
+  /users/{userId}/notifications:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    get:
+      tags: [notifications]
+      operationId: listNotifications
+      summary: Listar notificaciones del usuario (RF-A4)
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: unreadOnly
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de notificaciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationList'
+
+  /users/{userId}/notifications/read:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    post:
+      tags: [notifications]
+      operationId: markNotificationsRead
+      summary: Marcar notificaciones como leídas (RF-A4)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notificationIds:
+                  type: array
+                  items:
+                    type: string
+                  description: Si vacío, marca todas como leídas
+      responses:
+        '204':
+          description: Marcadas como leídas
+
+  /users/{userId}/notification-preferences:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    get:
+      tags: [notifications]
+      operationId: getNotificationPreferences
+      summary: Consultar preferencias de notificación (RF-A4)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Preferencias
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+    put:
+      tags: [notifications]
+      operationId: updateNotificationPreferences
+      summary: Actualizar preferencias de notificación (RF-A4)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreferences'
+      responses:
+        '200':
+          description: Preferencias actualizadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+
+  # ── HISTORY & PERSONAL LISTS ──────────────────────────────────────────────
+
+  /users/{userId}/watch-history:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    get:
+      tags: [history]
+      operationId: getWatchHistory
+      summary: Consultar historial de visualización (RF-A5)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Historial paginado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchHistoryList'
+    delete:
+      tags: [history]
+      operationId: clearWatchHistory
+      summary: Borrar todo el historial por privacidad (RF-A5)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Historial borrado
+
+  /users/{userId}/watch-later:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    get:
+      tags: [history]
+      operationId: getWatchLater
+      summary: Listar contenido guardado para ver después (RF-A5)
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de contenido guardado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchLaterList'
+    post:
+      tags: [history]
+      operationId: addToWatchLater
+      summary: Guardar contenido para ver después (RF-A5)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [catalogItemId]
+              properties:
+                catalogItemId:
+                  type: string
+      responses:
+        '201':
+          description: Agregado a ver después
+
+  /users/{userId}/watch-later/{catalogItemId}:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+      - in: path
+        name: catalogItemId
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [history]
+      operationId: removeFromWatchLater
+      summary: Quitar de la lista ver después (RF-A5)
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Eliminado
+
+  # ── COMMUNITY ─────────────────────────────────────────────────────────────
+
+  /channels/{channelId}/community-posts:
+    parameters:
+      - $ref: '#/components/parameters/channelId'
+    post:
+      tags: [community]
+      operationId: createCommunityPost
+      summary: Publicar post de comunidad (RF-A6)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommunityPostRequest'
+      responses:
+        '201':
+          description: Post de comunidad creado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityPost'
+    get:
+      tags: [community]
+      operationId: listCommunityPosts
+      summary: Listar posts de comunidad de un canal (RF-A6)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: Lista de posts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityPostList'
+
+  /community-posts/{postId}/reactions:
+    parameters:
+      - in: path
+        name: postId
+        required: true
+        schema:
+          type: string
+    put:
+      tags: [community]
+      operationId: reactToCommunityPost
+      summary: Reaccionar a un post de comunidad (RF-A6)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reactionType]
+              properties:
+                reactionType:
+                  type: string
+                  enum: [like, dislike]
+      responses:
+        '200':
+          description: Reacción registrada
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    userId:
+      in: path
+      name: userId
+      required: true
+      schema:
+        type: string
+    channelId:
+      in: path
+      name: channelId
+      required: true
+      schema:
+        type: string
+    catalogItemId:
+      in: path
+      name: catalogItemId
+      required: true
+      schema:
+        type: string
+    commentId:
+      in: path
+      name: commentId
+      required: true
+      schema:
+        type: string
+    page:
+      in: query
+      name: page
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSize:
+      in: query
+      name: pageSize
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    NotFound:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Operación no válida para el estado actual
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    # ── Subscriptions ──
+
+    Subscription:
+      type: object
+      required: [userId, channelId, subscribedAt]
+      properties:
+        userId:
+          type: string
+        channelId:
+          type: string
+        subscribedAt:
+          type: string
+          format: date-time
+
+    SubscriptionList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscription'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    SubscriberCount:
+      type: object
+      required: [channelId, count]
+      properties:
+        channelId:
+          type: string
+        count:
+          type: integer
+          format: int64
+
+    # ── Reactions ──
+
+    ReactionTotals:
+      type: object
+      required: [catalogItemId, likes, dislikes]
+      properties:
+        catalogItemId:
+          type: string
+        likes:
+          type: integer
+          format: int64
+        dislikes:
+          type: integer
+          format: int64
+
+    UserReaction:
+      type: object
+      required: [userId, catalogItemId, reactionType, reactedAt]
+      properties:
+        userId:
+          type: string
+        catalogItemId:
+          type: string
+        reactionType:
+          type: string
+          enum: [like, dislike]
+        reactedAt:
+          type: string
+          format: date-time
+
+    # ── Comments ──
+
+    CreateCommentRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          maxLength: 10000
+
+    Comment:
+      type: object
+      required: [commentId, authorId, text, createdAt]
+      properties:
+        commentId:
+          type: string
+        catalogItemId:
+          type: string
+        parentCommentId:
+          type: string
+          description: Presente si es respuesta a otro comentario
+        authorId:
+          type: string
+        text:
+          type: string
+        isPinned:
+          type: boolean
+          default: false
+        likeCount:
+          type: integer
+        replyCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        editedAt:
+          type: string
+          format: date-time
+
+    CommentList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Notifications ──
+
+    Notification:
+      type: object
+      required: [notificationId, userId, type, isRead, createdAt]
+      properties:
+        notificationId:
+          type: string
+        userId:
+          type: string
+        type:
+          type: string
+          enum: [new_video, comment_reply, channel_live, subscription_activity]
+        referenceId:
+          type: string
+          description: ID del recurso relacionado (catalogItemId, commentId, etc.)
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    NotificationList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    NotificationPreferences:
+      type: object
+      properties:
+        newVideoFromSubscribed:
+          type: boolean
+          default: true
+        commentReplies:
+          type: boolean
+          default: true
+        channelLive:
+          type: boolean
+          default: true
+        emailDigest:
+          type: boolean
+          default: false
+
+    # ── History ──
+
+    WatchHistoryEntry:
+      type: object
+      required: [catalogItemId, watchedAt]
+      properties:
+        catalogItemId:
+          type: string
+        watchedAt:
+          type: string
+          format: date-time
+        watchedSeconds:
+          type: number
+          format: float
+
+    WatchHistoryList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchHistoryEntry'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    WatchLaterItem:
+      type: object
+      required: [catalogItemId, savedAt]
+      properties:
+        catalogItemId:
+          type: string
+        savedAt:
+          type: string
+          format: date-time
+
+    WatchLaterList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchLaterItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    # ── Community ──
+
+    CreateCommunityPostRequest:
+      type: object
+      required: [postType, content]
+      properties:
+        postType:
+          type: string
+          enum: [text, poll, image]
+        content:
+          type: string
+          maxLength: 5000
+        imageUrl:
+          type: string
+          format: uri
+        pollOptions:
+          type: array
+          items:
+            type: string
+          minItems: 2
+          maxItems: 5
+
+    CommunityPost:
+      type: object
+      required: [postId, channelId, postType, content, createdAt]
+      properties:
+        postId:
+          type: string
+        channelId:
+          type: string
+        postType:
+          type: string
+          enum: [text, poll, image]
+        content:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        pollOptions:
+          type: array
+          items:
+            type: string
+        likeCount:
+          type: integer
+        commentCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    CommunityPostList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommunityPost'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      required: [page, pageSize, totalItems]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        totalItems:
+          type: integer
+        totalPages:
+          type: integer
