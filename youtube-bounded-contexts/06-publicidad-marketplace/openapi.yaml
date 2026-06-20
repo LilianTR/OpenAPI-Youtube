@@ -694,7 +694,8 @@ components:
           enum: [credit_card, bank_transfer, prepaid]
         currency:
           type: string
-          example: USD
+          examples:
+            - USD
 
     # ── Campaign ──
 
@@ -712,7 +713,8 @@ components:
           format: int64
         currency:
           type: string
-          example: USD
+          examples:
+            - USD
         startDate:
           type: string
           format: date

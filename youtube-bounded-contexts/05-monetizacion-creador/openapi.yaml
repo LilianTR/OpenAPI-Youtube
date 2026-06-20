@@ -665,7 +665,8 @@ components:
           format: float
         priceCurrency:
           type: string
-          example: USD
+          examples:
+            - USD
         benefits:
           type: array
           items:
@@ -747,7 +748,8 @@ components:
           type: integer
         currency:
           type: string
-          example: USD
+          examples:
+            - USD
         message:
           type: string
 
@@ -958,7 +960,8 @@ components:
           type: string
         type:
           type: string
-          example: 1099-K
+          examples:
+            - 1099-K
         year:
           type: integer
         url:
