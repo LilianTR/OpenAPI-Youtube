@@ -1,0 +1,1240 @@
+openapi: 3.0.3
+info:
+  title: Discovery & Personalization API
+  version: "1.0.0"
+  description: |
+    ## Responsabilidad del bounded context
+
+    Este servicio de dominio es responsable de **ayudar al usuario a encontrar contenido
+    relevante** dentro de la plataforma: búsqueda de videos y canales, generación de feeds
+    personalizados, contenido relacionado, tendencias/exploración y captura de señales de
+    comportamiento usadas para personalización y ranking.
+
+    ### Está dentro del alcance
+    - Búsqueda de contenido (texto libre, filtros, orden, sugerencias, canales)
+    - Feeds de inicio personalizados (paginados, con explicabilidad interna)
+    - Contenido relacionado a un ítem dado
+    - Tendencias por región/categoría y exploración temática
+    - Captura de señales de impresión, click y tiempo de visualización
+    - Indexación/actualización del índice de búsqueda y recomendación
+
+    ### Está fuera del alcance
+    - Almacenar comentarios o reacciones (ver **Audience & Engagement API**)
+    - Servir el stream de video o gestionar el ciclo de vida técnico (ver **Publishing API**)
+    - Pagar a creadores (ver **Creator Monetization API**)
+    - Crear o gestionar campañas publicitarias (ver **Advertising API**)
+    - Definir reglas de visibilidad legal/editorial: este contexto **consume** el estado de
+      publicación que define **Catálogo editorial y derechos** y no lo determina por sí mismo.
+
+    ### Modelo canónico de "Video" en este contexto
+    Aquí el video es un **candidato de ranking**: una referencia indexada (`catalogItemId`)
+    enriquecida con señales de relevancia (embeddings, popularidad, frescura, afinidad de
+    usuario). No contiene metadata editorial completa ni el archivo/stream; ambos se resuelven
+    consultando Catálogo y Publicación respectivamente.
+
+    ### Integración con otros contextos
+    - **Consume eventos** de Catálogo (contenido publicado/actualizado/restringido), de
+      Audiencia (engagement registrado) y de Publicación (sesión de reproducción completada).
+    - **Emite eventos** de búsqueda realizada y recomendación servida (uso interno/analítico).
+    - Nunca decide visibilidad: si Catálogo marca un ítem como no visible, este contexto debe
+      excluirlo del índice activo, aunque pueda existir una ventana de inconsistencia eventual
+      (ver sección "Consistencia eventual" más abajo).
+
+    ### Consistencia eventual
+    Los índices de búsqueda, feed y trending pueden estar momentáneamente desincronizados con
+    Catálogo. Si un ítem se despublica mientras estaba en un feed ya entregado al cliente, la
+    capa de reproducción (Publicación) y Catálogo son responsables de bloquear el acceso real;
+    este contexto se limita a remover el ítem del índice de forma asíncrona en el menor tiempo
+    posible tras recibir el evento correspondiente.
+
+  contact:
+    name: Equipo Discovery & Personalization
+    email: discovery-team@youtube-clone.example.com
+
+servers:
+  - url: https://api.youtube-clone.example.com/discovery/v1
+    description: Entorno de producción
+  - url: https://staging-api.youtube-clone.example.com/discovery/v1
+    description: Entorno de staging
+
+tags:
+  - name: Search
+    description: Búsqueda de contenido y canales (RF-D1)
+  - name: Feed
+    description: Feed de inicio personalizado (RF-D2)
+  - name: Related
+    description: Contenido relacionado (RF-D3)
+  - name: Discover
+    description: Tendencias y exploración por categoría (RF-D4)
+  - name: Signals
+    description: Captura de señales de comportamiento (RF-D5)
+  - name: Indexing
+    description: Indexación de contenido (RF-D6), uso interno/sistema
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------
+  # RF-D1 — Búsqueda
+  # ---------------------------------------------------------------------
+  /search/videos:
+    get:
+      operationId: searchVideos
+      tags: [Search]
+      summary: Buscar contenido por texto libre
+      description: |
+        Busca videos (referencias a ítems de catálogo) por texto libre, con soporte de
+        filtros y ordenamiento. Quién puede ejecutarla: **viewer autenticado o anónimo**
+        (actor `viewer` o `anonymous`); las búsquedas anónimas no se personalizan.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Texto de búsqueda libre.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          example: "diseño de software bounded contexts"
+        - name: type
+          in: query
+          required: false
+          description: Tipo de contenido a buscar.
+          schema:
+            type: string
+            enum: [video, live, all]
+            default: all
+        - name: durationRange
+          in: query
+          required: false
+          description: Filtro de duración del video.
+          schema:
+            type: string
+            enum: [short, medium, long, any]
+            default: any
+          example: medium
+        - name: uploadedAfter
+          in: query
+          required: false
+          description: Filtra contenido publicado después de esta fecha (ISO 8601).
+          schema:
+            type: string
+            format: date-time
+          example: "2026-01-01T00:00:00Z"
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: string
+          example: "cat_education"
+        - name: sortBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [relevance, date, popularity]
+            default: relevance
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Resultados de búsqueda paginados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchVideoResultPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /search/channels:
+    get:
+      operationId: searchChannels
+      tags: [Search]
+      summary: Buscar canales por texto libre
+      description: |
+        Busca canales por nombre o descripción. Quién puede ejecutarla: **viewer
+        autenticado o anónimo**.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+          example: "Edgardo Ortiz"
+        - name: sortBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [relevance, subscriberCount]
+            default: relevance
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Resultados de canales paginados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchChannelResultPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /search/suggestions:
+    get:
+      operationId: getSearchSuggestions
+      tags: [Search]
+      summary: Obtener sugerencias de autocompletado mientras el usuario escribe
+      description: |
+        Devuelve sugerencias de búsqueda en base a un prefijo de texto. Quién puede
+        ejecutarla: **viewer autenticado o anónimo**.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: prefix
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 100
+          example: "disñ"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 8
+      responses:
+        '200':
+          description: Lista de sugerencias ordenadas por relevancia.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchSuggestionList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-D2 — Feeds personalizados
+  # ---------------------------------------------------------------------
+  /feed/home:
+    get:
+      operationId: getHomeFeed
+      tags: [Feed]
+      summary: Obtener el feed de inicio personalizado
+      description: |
+        Genera un feed de inicio personalizado por usuario autenticado, o por sesión
+        anónima (`sessionId`) cuando no hay usuario autenticado. Quién puede ejecutarla:
+        **viewer autenticado o anónimo**. Cada ítem puede incluir una razón de
+        recomendación expuesta solo si `includeReasons=true`.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: sessionId
+          in: query
+          required: false
+          description: Identificador de sesión anónima. Requerido si no hay Bearer token.
+          schema:
+            type: string
+            format: uuid
+        - name: includeReasons
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página del feed de inicio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-D3 — Contenido relacionado
+  # ---------------------------------------------------------------------
+  /catalog-items/{catalogItemId}/related:
+    get:
+      operationId: getRelatedContent
+      tags: [Related]
+      summary: Obtener videos relacionados a un ítem de catálogo
+      description: |
+        Dado un `catalogItemId`, devuelve una lista de videos relacionados, considerando
+        similitud temática, historial del usuario (si está autenticado) y señales de
+        engagement agregadas. Quién puede ejecutarla: **viewer autenticado o anónimo**.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: Lista de contenido relacionado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelatedContentList'
+        '404':
+          description: El `catalogItemId` no existe o no es visible en el índice.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-D4 — Tendencias y exploración
+  # ---------------------------------------------------------------------
+  /trending:
+    get:
+      operationId: getTrending
+      tags: [Discover]
+      summary: Obtener contenido en tendencia por región y/o categoría
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: regionCode
+          in: query
+          required: false
+          description: Código de país ISO 3166-1 alpha-2.
+          schema:
+            type: string
+            pattern: '^[A-Z]{2}$'
+          example: "CL"
+        - name: categoryId
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de contenido en tendencia.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendingPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /explore/categories:
+    get:
+      operationId: listExploreCategories
+      tags: [Discover]
+      summary: Listar categorías disponibles para exploración
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        '200':
+          description: Lista de categorías.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Category'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /explore/categories/{categoryId}/items:
+    get:
+      operationId: exploreCategory
+      tags: [Discover]
+      summary: Explorar contenido de una categoría o tema específico
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: categoryId
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de ítems de la categoría.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryItemPage'
+        '404':
+          description: Categoría no encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-D5 — Captura de señales
+  # ---------------------------------------------------------------------
+  /signals/impressions:
+    post:
+      operationId: recordImpression
+      tags: [Signals]
+      summary: Registrar que un usuario vio un ítem en un feed (impresión)
+      description: |
+        Quién puede ejecutarla: **viewer autenticado o anónimo** (sistema cliente en su
+        nombre). Operación de alta frecuencia, idempotente por `eventId`.
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImpressionEventInput'
+      responses:
+        '202':
+          description: Señal aceptada para procesamiento asíncrono.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalAck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /signals/clicks:
+    post:
+      operationId: recordClick
+      tags: [Signals]
+      summary: Registrar un click en un ítem recomendado
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClickEventInput'
+      responses:
+        '202':
+          description: Señal aceptada para procesamiento asíncrono.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalAck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /signals/watch-time:
+    post:
+      operationId: recordWatchTimeSignal
+      tags: [Signals]
+      summary: Incorporar tiempo de visualización como señal de interés
+      description: |
+        Recibe señales derivadas de sesiones de reproducción (provenientes del contexto de
+        Publicación, vía evento "sesión de reproducción completada", o reenviadas por el
+        cliente) para actualizar el perfil de intereses del usuario. Quién puede
+        ejecutarla: **viewer autenticado** o **sistema** (integración server-to-server).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchTimeSignalInput'
+      responses:
+        '202':
+          description: Señal aceptada; el perfil de intereses se actualizará de forma asíncrona.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalAck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/{userId}/interest-profile:
+    get:
+      operationId: getInterestProfile
+      tags: [Signals]
+      summary: Consultar el perfil de intereses derivado de un usuario
+      description: |
+        Quién puede ejecutarla: **el propio viewer** (`userId` debe coincidir con el
+        usuario autenticado) o un **sistema** con scope `signals:read:any`.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Perfil de intereses actual.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InterestProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No existe perfil de intereses para este usuario aún.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-D6 — Indexación (uso interno / llamado por integraciones de sistema)
+  # ---------------------------------------------------------------------
+  /index/items:
+    post:
+      operationId: indexCatalogItem
+      tags: [Indexing]
+      summary: Indexar o re-indexar un ítem de catálogo recién publicado o actualizado
+      description: |
+        Llamado típicamente por una integración de eventos al recibir "Contenido
+        publicado/actualizado" desde Catálogo, o de forma directa por un job de
+        mantenimiento. Quién puede ejecutarla: **sistema** (scope `index:write`).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexItemInput'
+      responses:
+        '201':
+          description: Ítem indexado correctamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /index/items/{catalogItemId}:
+    delete:
+      operationId: removeFromIndex
+      tags: [Indexing]
+      summary: Remover o desindexar un ítem cuando cambia su visibilidad
+      description: |
+        Llamado al recibir el evento "Contenido despublicado/restringido" desde Catálogo.
+        Quién puede ejecutarla: **sistema** (scope `index:write`).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Ítem removido del índice (o ya no existía en él).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+
+components:
+  parameters:
+    PageCursor:
+      name: pageCursor
+      in: query
+      required: false
+      description: Cursor opaco de paginación devuelto por una respuesta anterior.
+      schema:
+        type: string
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Autenticación mediante JWT emitido por la plataforma de identidad compartida
+        (Google Account / Identity Provider de la plataforma, fuera de este bounded
+        context). El token incluye:
+
+        - `sub`: identificador único del actor (`userId`).
+        - `roles`: lista de roles del actor. Roles relevantes en esta API:
+          - `viewer`: usuario final que busca, navega feeds y genera señales.
+          - `system`: integraciones server-to-server (consumidores de eventos,
+            jobs de indexación, otros bounded contexts).
+        - `scope`: permisos finos, p.ej. `signals:read:any`, `index:write`.
+
+        Los endpoints de lectura pública (búsqueda, feed, trending, related, explorar)
+        aceptan tanto un Bearer token (`viewer`) como solicitudes anónimas (sin header
+        `Authorization`), declarado explícitamente como `security: [bearerAuth: [], {}]`
+        en cada operación. Los endpoints de indexación y lectura de perfiles ajenos
+        requieren rol `system`.
+
+  responses:
+    BadRequest:
+      description: Parámetros de solicitud inválidos.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "El parámetro 'q' es requerido y no puede estar vacío."
+              details:
+                - field: "q"
+                  issue: "missing_or_empty"
+              traceId: "7d6f0a8e-3b1a-4e9a-9c2a-1f7a6b9d4e21"
+    Unauthorized:
+      description: No se proporcionó un token válido para una operación que lo requiere.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Se requiere autenticación para acceder a este recurso."
+              details: []
+              traceId: "7d6f0a8e-3b1a-4e9a-9c2a-1f7a6b9d4e22"
+    Forbidden:
+      description: El actor autenticado no tiene permisos suficientes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "FORBIDDEN"
+              message: "El actor no tiene el rol o scope requerido para esta operación."
+              details: []
+              traceId: "7d6f0a8e-3b1a-4e9a-9c2a-1f7a6b9d4e23"
+    TooManyRequests:
+      description: Se excedió el límite de tasa de solicitudes.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "RATE_LIMITED"
+              message: "Se ha excedido el límite de solicitudes. Intente nuevamente más tarde."
+              details: []
+              traceId: "7d6f0a8e-3b1a-4e9a-9c2a-1f7a6b9d4e24"
+    InternalError:
+      description: Error interno no esperado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "Ocurrió un error inesperado. Intente nuevamente más tarde."
+              details: []
+              traceId: "7d6f0a8e-3b1a-4e9a-9c2a-1f7a6b9d4e25"
+
+  schemas:
+    # -----------------------------------------------------------------
+    # Error consistente (RNF-3)
+    # -----------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Código de error estable y legible por máquina.
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              description: Mensaje legible por humanos.
+              example: "El parámetro 'q' es requerido y no puede estar vacío."
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    example: "q"
+                  issue:
+                    type: string
+                    example: "missing_or_empty"
+            traceId:
+              type: string
+              format: uuid
+              description: Identificador de traza para soporte/debugging.
+
+    # -----------------------------------------------------------------
+    # Paginación común (RNF-3)
+    # -----------------------------------------------------------------
+    PageInfo:
+      type: object
+      required: [pageSize, hasNextPage]
+      properties:
+        nextPageCursor:
+          type: string
+          nullable: true
+          description: Cursor a usar en `pageCursor` para obtener la siguiente página.
+          example: "eyJvZmZzZXQiOjQwfQ=="
+        pageSize:
+          type: integer
+          example: 20
+        hasNextPage:
+          type: boolean
+          example: true
+        totalEstimate:
+          type: integer
+          nullable: true
+          description: Estimación del total de resultados (puede ser aproximada o nula).
+          example: 1532
+
+    # -----------------------------------------------------------------
+    # RF-D1 — Búsqueda
+    # -----------------------------------------------------------------
+    SearchVideoItem:
+      type: object
+      required: [catalogItemId, title, channelId, channelName, durationSeconds, publishedAt, thumbnailUrl, score]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+          description: Referencia al ítem en el bounded context de Catálogo.
+          example: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+        title:
+          type: string
+          example: "Diseño de bounded contexts en sistemas distribuidos"
+        channelId:
+          type: string
+          format: uuid
+          example: "8a1b2c3d-4e5f-6789-abcd-ef0123456789"
+        channelName:
+          type: string
+          example: "Edgardo Ortiz - Diseño de Software"
+        durationSeconds:
+          type: integer
+          minimum: 0
+          example: 754
+        publishedAt:
+          type: string
+          format: date-time
+          example: "2026-03-15T14:30:00Z"
+        thumbnailUrl:
+          type: string
+          format: uri
+          example: "https://cdn.youtube-clone.example.com/thumbnails/c2f1a4b0.jpg"
+        viewCountApprox:
+          type: integer
+          minimum: 0
+          example: 18230
+        score:
+          type: number
+          format: float
+          description: Score interno de relevancia (no necesariamente expuesto en UI).
+          example: 0.873
+      example:
+        catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+        title: "Diseño de bounded contexts en sistemas distribuidos"
+        channelId: "8a1b2c3d-4e5f-6789-abcd-ef0123456789"
+        channelName: "Edgardo Ortiz - Diseño de Software"
+        durationSeconds: 754
+        publishedAt: "2026-03-15T14:30:00Z"
+        thumbnailUrl: "https://cdn.youtube-clone.example.com/thumbnails/c2f1a4b0.jpg"
+        viewCountApprox: 18230
+        score: 0.873
+
+    SearchVideoResultPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchVideoItem'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    SearchChannelItem:
+      type: object
+      required: [channelId, name, subscriberCountApprox]
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Edgardo Ortiz - Diseño de Software"
+        description:
+          type: string
+          example: "Cursos y videos sobre arquitectura y diseño de software."
+        avatarUrl:
+          type: string
+          format: uri
+          example: "https://cdn.youtube-clone.example.com/avatars/8a1b2c3d.jpg"
+        subscriberCountApprox:
+          type: integer
+          minimum: 0
+          example: 45210
+
+    SearchChannelResultPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchChannelItem'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    SearchSuggestionList:
+      type: object
+      required: [suggestions]
+      properties:
+        suggestions:
+          type: array
+          items:
+            type: object
+            required: [text]
+            properties:
+              text:
+                type: string
+                example: "diseño de software"
+              type:
+                type: string
+                enum: [query, channel]
+                default: query
+
+    # -----------------------------------------------------------------
+    # RF-D2 — Feed
+    # -----------------------------------------------------------------
+    FeedItem:
+      type: object
+      required: [catalogItemId, title, channelId, channelName, thumbnailUrl, durationSeconds]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: "Cómo modelar agregados en DDD"
+        channelId:
+          type: string
+          format: uuid
+        channelName:
+          type: string
+          example: "Edgardo Ortiz - Diseño de Software"
+        thumbnailUrl:
+          type: string
+          format: uri
+        durationSeconds:
+          type: integer
+          minimum: 0
+          example: 612
+        publishedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          nullable: true
+          description: Razón de recomendación, solo presente si `includeReasons=true`.
+          example: "Porque viste 'Introducción a Domain-Driven Design'"
+
+    FeedPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItem'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    # -----------------------------------------------------------------
+    # RF-D3 — Related
+    # -----------------------------------------------------------------
+    RelatedContentItem:
+      type: object
+      required: [catalogItemId, title, channelId, channelName, thumbnailUrl, durationSeconds, relatedScore]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        channelId:
+          type: string
+          format: uuid
+        channelName:
+          type: string
+        thumbnailUrl:
+          type: string
+          format: uri
+        durationSeconds:
+          type: integer
+          minimum: 0
+        relatedScore:
+          type: number
+          format: float
+          example: 0.91
+
+    RelatedContentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedContentItem'
+
+    # -----------------------------------------------------------------
+    # RF-D4 — Trending / Explore
+    # -----------------------------------------------------------------
+    Category:
+      type: object
+      required: [categoryId, name]
+      properties:
+        categoryId:
+          type: string
+          example: "cat_education"
+        name:
+          type: string
+          example: "Educación"
+
+    TrendingItem:
+      type: object
+      required: [catalogItemId, title, channelId, channelName, thumbnailUrl, rank]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        channelId:
+          type: string
+          format: uuid
+        channelName:
+          type: string
+        thumbnailUrl:
+          type: string
+          format: uri
+        rank:
+          type: integer
+          minimum: 1
+          example: 3
+        regionCode:
+          type: string
+          example: "CL"
+        categoryId:
+          type: string
+          nullable: true
+          example: "cat_education"
+
+    TrendingPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TrendingItem'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    CategoryItemPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchVideoItem'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    # -----------------------------------------------------------------
+    # RF-D5 — Signals
+    # -----------------------------------------------------------------
+    ImpressionEventInput:
+      type: object
+      required: [eventId, catalogItemId, surface, occurredAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Identificador idempotente del evento, generado por el cliente.
+        catalogItemId:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+          description: Requerido si el actor es anónimo.
+        surface:
+          type: string
+          enum: [home_feed, search_results, related, trending, explore]
+          example: "home_feed"
+        position:
+          type: integer
+          minimum: 0
+          description: Posición del ítem dentro del listado mostrado.
+          example: 2
+        occurredAt:
+          type: string
+          format: date-time
+      example:
+        eventId: "f1e2d3c4-b5a6-4978-8675-309abcdef123"
+        catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+        surface: "home_feed"
+        position: 2
+        occurredAt: "2026-06-20T18:32:10Z"
+
+    ClickEventInput:
+      type: object
+      required: [eventId, catalogItemId, surface, occurredAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        catalogItemId:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+        surface:
+          type: string
+          enum: [home_feed, search_results, related, trending, explore]
+        position:
+          type: integer
+          minimum: 0
+        occurredAt:
+          type: string
+          format: date-time
+      example:
+        eventId: "a9b8c7d6-e5f4-4321-9876-543210fedcba"
+        catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+        surface: "search_results"
+        position: 0
+        occurredAt: "2026-06-20T18:33:02Z"
+
+    WatchTimeSignalInput:
+      type: object
+      required: [eventId, catalogItemId, watchedSeconds, totalDurationSeconds, occurredAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        catalogItemId:
+          type: string
+          format: uuid
+        playbackSessionId:
+          type: string
+          format: uuid
+          description: Referencia opcional a la sesión de reproducción en Publicación.
+        watchedSeconds:
+          type: integer
+          minimum: 0
+          example: 480
+        totalDurationSeconds:
+          type: integer
+          minimum: 0
+          example: 612
+        occurredAt:
+          type: string
+          format: date-time
+      example:
+        eventId: "1a2b3c4d-5e6f-4789-90ab-cdef12345678"
+        catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+        playbackSessionId: "55667788-99aa-4bbc-8dde-ff0011223344"
+        watchedSeconds: 480
+        totalDurationSeconds: 612
+        occurredAt: "2026-06-20T18:40:00Z"
+
+    SignalAck:
+      type: object
+      required: [eventId, status]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [accepted, duplicate]
+          example: "accepted"
+
+    InterestProfile:
+      type: object
+      required: [userId, topInterests, updatedAt]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        topInterests:
+          type: array
+          items:
+            type: object
+            required: [categoryId, weight]
+            properties:
+              categoryId:
+                type: string
+                example: "cat_education"
+              weight:
+                type: number
+                format: float
+                minimum: 0
+                maximum: 1
+                example: 0.62
+        updatedAt:
+          type: string
+          format: date-time
+
+    # -----------------------------------------------------------------
+    # RF-D6 — Indexing
+    # -----------------------------------------------------------------
+    IndexItemInput:
+      type: object
+      required: [catalogItemId, channelId, title, categoryId, publishedAt, visibility]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        tags:
+          type: array
+          items:
+            type: string
+          maxItems: 50
+        categoryId:
+          type: string
+        publishedAt:
+          type: string
+          format: date-time
+        durationSeconds:
+          type: integer
+          minimum: 0
+        visibility:
+          type: string
+          enum: [public, unlisted]
+          description: Solo ítems indexables; "private" o restringidos no deben enviarse.
+      example:
+        catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+        channelId: "8a1b2c3d-4e5f-6789-abcd-ef0123456789"
+        title: "Diseño de bounded contexts en sistemas distribuidos"
+        description: "Una introducción práctica a DDD aplicado a microservicios."
+        tags: ["ddd", "arquitectura", "microservicios"]
+        categoryId: "cat_education"
+        publishedAt: "2026-03-15T14:30:00Z"
+        durationSeconds: 754
+        visibility: "public"
+
+    IndexedItem:
+      type: object
+      required: [catalogItemId, indexedAt, status]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        indexedAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [indexed, queued]
