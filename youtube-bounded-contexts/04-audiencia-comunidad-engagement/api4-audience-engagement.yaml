@@ -1,0 +1,1634 @@
+openapi: 3.0.3
+info:
+  title: Audience, Community & Engagement API
+  version: "1.0.0"
+  description: |
+    ## Responsabilidad del bounded context
+
+    Este servicio de dominio gestiona la **relación social** entre usuarios, creadores y
+    contenido: suscripciones a canales, reacciones, comentarios, notificaciones, historial
+    personal de visualización y posts de comunidad.
+
+    ### Está dentro del alcance
+    - Suscripciones (seguir/dejar de seguir canales, conteo de suscriptores)
+    - Reacciones (like/dislike u otro mecanismo) y sus totales agregados
+    - Comentarios, hilos de respuesta, fijado y reportes
+    - Notificaciones y preferencias de notificación
+    - Historial de visualización y lista "ver más tarde"
+    - Posts de comunidad del canal y su interacción
+
+    ### Está fuera del alcance
+    - Ranking del home feed (ver **Discovery & Personalization API**)
+    - Metadata editorial de contenido: título, descripción, tags (ver **Catalog API**)
+    - Transcoding y reproducción técnica (ver **Publishing API**)
+    - Pagos y suscripciones Premium de pago (ver **Creator Monetization API**)
+
+    ### Modelo canónico de conceptos en este contexto
+    - **Canal**: aquí es un **perfil social** (identificado por `channelId`, compartido como
+      referencia con Catálogo, pero sin duplicar su metadata editorial completa).
+    - **Usuario**: aquí es un **miembro de comunidad** (`userId`), no el "viewer" de
+      Descubrimiento ni el "anunciante" de Publicidad.
+    - **Suscripción**: es una **relación social** de seguimiento, explícitamente distinta de
+      una suscripción Premium de pago (esa vive en Monetización).
+    - **Video/Contenido**: este contexto solo referencia `catalogItemId`; valida su
+      existencia contra Catálogo pero no almacena su metadata editorial.
+
+    ### Integración con otros contextos
+    - **Consume eventos** de Catálogo: contenido publicado (para notificar a suscriptores) y
+      cambios de visibilidad (para ocultar interacciones si el contenido deja de ser visible).
+    - **Emite eventos**: usuario suscrito/desuscrito, comentario publicado/eliminado, reacción
+      registrada, y una señal de engagement agregada consumida por **Descubrimiento**.
+    - Valida la existencia de `catalogItemId` / `channelId` contra Catálogo mediante consulta
+      síncrona solo cuando es estrictamente necesario (p. ej. al crear el primer comentario
+      sobre un ítem); no duplica su metadata.
+
+    ### Consistencia eventual
+    Si un contenido se despublica o restringe mientras existen comentarios/reacciones activos,
+    este contexto no elimina los datos sociales, pero los marca como no visibles públicamente
+    hasta que el contenido vuelva a estar publicado o se confirme su eliminación definitiva.
+
+  contact:
+    name: Equipo Audience, Community & Engagement
+    email: audience-team@youtube-clone.example.com
+
+servers:
+  - url: https://api.youtube-clone.example.com/audience/v1
+    description: Entorno de producción
+  - url: https://staging-api.youtube-clone.example.com/audience/v1
+    description: Entorno de staging
+
+tags:
+  - name: Subscriptions
+    description: Suscripciones a canales (RF-A1)
+  - name: Reactions
+    description: Reacciones a contenido (RF-A2)
+  - name: Comments
+    description: Comentarios y respuestas (RF-A3)
+  - name: Notifications
+    description: Notificaciones y preferencias (RF-A4)
+  - name: History
+    description: Historial y listas personales (RF-A5)
+  - name: CommunityPosts
+    description: Posts de comunidad del canal (RF-A6)
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------------
+  # RF-A1 — Suscripciones
+  # ---------------------------------------------------------------------
+  /channels/{channelId}/subscription:
+    put:
+      operationId: subscribeToChannel
+      tags: [Subscriptions]
+      summary: Seguir un canal
+      description: |
+        Crea (o reafirma, de forma idempotente) la relación de seguimiento entre el
+        usuario autenticado y un canal. Quién puede ejecutarla: **member** (usuario
+        autenticado). Un usuario no puede suscribirse a sí mismo si `channelId`
+        pertenece a su propia cuenta de creador (regla de negocio aplicada en backend).
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Suscripción creada o ya existente (operación idempotente).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: El canal referenciado no existe en Catálogo.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: unsubscribeFromChannel
+      tags: [Subscriptions]
+      summary: Dejar de seguir un canal
+      description: "Quién puede ejecutarla: **member** (usuario autenticado, dueño de la suscripción)."
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Suscripción eliminada (o no existía).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/subscriptions:
+    get:
+      operationId: listMySubscriptions
+      tags: [Subscriptions]
+      summary: Listar los canales seguidos por el usuario autenticado
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de suscripciones del usuario.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriptionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /channels/{channelId}/subscribers/count:
+    get:
+      operationId: getSubscriberCount
+      tags: [Subscriptions]
+      summary: Consultar el conteo de suscriptores de un canal
+      description: "Quién puede ejecutarla: **cualquier actor** (público, sin autenticación requerida)."
+      security: []
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conteo actual de suscriptores.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubscriberCount'
+        '404':
+          description: Canal no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-A2 — Reacciones
+  # ---------------------------------------------------------------------
+  /catalog-items/{catalogItemId}/reaction:
+    put:
+      operationId: setReaction
+      tags: [Reactions]
+      summary: Expresar o cambiar una reacción sobre un contenido
+      description: |
+        Crea la reacción del usuario autenticado sobre un contenido, o la reemplaza si ya
+        existía una distinta (p. ej. cambiar de "like" a "dislike"). Quién puede
+        ejecutarla: **member** (usuario autenticado).
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReactionInput'
+      responses:
+        '200':
+          description: Reacción registrada o actualizada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: El `catalogItemId` no existe o no es visible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: removeReaction
+      tags: [Reactions]
+      summary: Eliminar la reacción previa del usuario sobre un contenido
+      description: "Quién puede ejecutarla: **member** (usuario autenticado, dueño de la reacción)."
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Reacción eliminada (o no existía).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /catalog-items/{catalogItemId}/reactions/summary:
+    get:
+      operationId: getReactionSummary
+      tags: [Reactions]
+      summary: Obtener totales agregados de reacciones de un contenido
+      description: "Quién puede ejecutarla: **cualquier actor** (público)."
+      security: []
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Totales agregados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReactionSummary'
+        '404':
+          description: Contenido no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-A3 — Comentarios
+  # ---------------------------------------------------------------------
+  /catalog-items/{catalogItemId}/comments:
+    get:
+      operationId: listComments
+      tags: [Comments]
+      summary: Listar comentarios de un contenido
+      description: |
+        Lista comentarios de nivel raíz (no incluye respuestas anidadas; usar el
+        endpoint de respuestas para obtener un hilo). Quién puede ejecutarla:
+        **cualquier actor** (público).
+      security: []
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: sortBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [recent, top]
+            default: top
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de comentarios.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentPage'
+        '404':
+          description: Contenido no encontrado o no visible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createComment
+      tags: [Comments]
+      summary: Publicar un comentario en un contenido
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      responses:
+        '201':
+          description: Comentario creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: El `catalogItemId` no existe o no es visible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /comments/{commentId}:
+    patch:
+      operationId: updateComment
+      tags: [Comments]
+      summary: Editar un comentario propio
+      description: |
+        Quién puede ejecutarla: **member**, exclusivamente el **autor** del comentario.
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentUpdateInput'
+      responses:
+        '200':
+          description: Comentario actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: El actor no es el autor del comentario.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Comentario no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteComment
+      tags: [Comments]
+      summary: Eliminar un comentario propio
+      description: |
+        Quién puede ejecutarla: **member** autor del comentario, o **creador** dueño del
+        canal donde se publicó (moderación de su propio contenido).
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Comentario eliminado.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: El actor no tiene permiso para eliminar este comentario.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Comentario no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /comments/{commentId}/replies:
+    get:
+      operationId: listCommentReplies
+      tags: [Comments]
+      summary: Listar las respuestas (thread) de un comentario
+      security: []
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de respuestas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentPage'
+        '404':
+          description: Comentario no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: replyToComment
+      tags: [Comments]
+      summary: Responder a un comentario existente
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      responses:
+        '201':
+          description: Respuesta creada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Comentario padre no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /comments/{commentId}/pin:
+    put:
+      operationId: pinComment
+      tags: [Comments]
+      summary: Fijar un comentario como destacado
+      description: |
+        Quién puede ejecutarla: **creador** dueño del canal donde está publicado el
+        contenido asociado al comentario. Solo puede existir un comentario fijado por
+        contenido; fijar uno nuevo des-fija el anterior.
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Comentario fijado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: El actor no es el creador dueño del canal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Comentario no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: unpinComment
+      tags: [Comments]
+      summary: Quitar la fijación de un comentario
+      description: "Quién puede ejecutarla: **creador** dueño del canal."
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Comentario des-fijado (o ya no estaba fijado).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /comments/{commentId}/report:
+    post:
+      operationId: reportComment
+      tags: [Comments]
+      summary: Reportar un comentario inapropiado
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentReportInput'
+      responses:
+        '202':
+          description: Reporte aceptado para revisión (moderación es un proceso transversal).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentReportAck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Comentario no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-A4 — Notificaciones
+  # ---------------------------------------------------------------------
+  /users/me/notifications:
+    get:
+      operationId: listMyNotifications
+      tags: [Notifications]
+      summary: Listar notificaciones del usuario autenticado
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: unreadOnly
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de notificaciones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/notifications/{notificationId}/read:
+    put:
+      operationId: markNotificationAsRead
+      tags: [Notifications]
+      summary: Marcar una notificación como leída
+      description: "Quién puede ejecutarla: **member**, dueño de la notificación."
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notificación actualizada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Notificación no encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/notifications/read-all:
+    put:
+      operationId: markAllNotificationsAsRead
+      tags: [Notifications]
+      summary: Marcar todas las notificaciones del usuario como leídas
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      responses:
+        '204':
+          description: Notificaciones marcadas como leídas.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/notification-preferences:
+    get:
+      operationId: getNotificationPreferences
+      tags: [Notifications]
+      summary: Consultar las preferencias de notificación del usuario
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      responses:
+        '200':
+          description: Preferencias actuales.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: updateNotificationPreferences
+      tags: [Notifications]
+      summary: Configurar las preferencias de notificación del usuario
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreferencesInput'
+      responses:
+        '200':
+          description: Preferencias actualizadas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-A5 — Historial y listas personales
+  # ---------------------------------------------------------------------
+  /users/me/history:
+    get:
+      operationId: listWatchHistory
+      tags: [History]
+      summary: Listar el historial de visualización del usuario
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de historial.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchHistoryPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: clearWatchHistory
+      tags: [History]
+      summary: Borrar el historial de visualización completo (privacidad)
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      responses:
+        '204':
+          description: Historial eliminado.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/history/{historyEntryId}:
+    delete:
+      operationId: deleteHistoryEntry
+      tags: [History]
+      summary: Borrar una entrada puntual del historial
+      description: "Quién puede ejecutarla: **member**, dueño de la entrada."
+      parameters:
+        - name: historyEntryId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Entrada eliminada (o no existía).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/watch-later:
+    get:
+      operationId: listWatchLater
+      tags: [History]
+      summary: Listar contenido guardado para ver después
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de la lista "ver más tarde".
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchLaterPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: addToWatchLater
+      tags: [History]
+      summary: Guardar contenido para ver después
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WatchLaterInput'
+      responses:
+        '201':
+          description: Ítem agregado a la lista.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchLaterItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: El `catalogItemId` no existe o no es visible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /users/me/watch-later/{catalogItemId}:
+    delete:
+      operationId: removeFromWatchLater
+      tags: [History]
+      summary: Quitar un contenido de la lista "ver más tarde"
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Ítem removido (o no existía).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ---------------------------------------------------------------------
+  # RF-A6 — Comunidad del canal
+  # ---------------------------------------------------------------------
+  /channels/{channelId}/community-posts:
+    get:
+      operationId: listCommunityPosts
+      tags: [CommunityPosts]
+      summary: Listar los posts de comunidad de un canal
+      security: []
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Página de posts de comunidad.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityPostPage'
+        '404':
+          description: Canal no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createCommunityPost
+      tags: [CommunityPosts]
+      summary: Publicar un post de comunidad en el canal propio
+      description: |
+        Quién puede ejecutarla: **creador**, exclusivamente dueño de `channelId`.
+        Soporta texto, encuestas e imágenes, independientes de un video.
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommunityPostInput'
+      responses:
+        '201':
+          description: Post de comunidad creado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityPost'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: El actor no es el creador dueño del canal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /community-posts/{postId}/comments:
+    post:
+      operationId: commentOnCommunityPost
+      tags: [CommunityPosts]
+      summary: Comentar un post de comunidad
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentInput'
+      responses:
+        '201':
+          description: Comentario creado sobre el post.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Post de comunidad no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /community-posts/{postId}/reaction:
+    put:
+      operationId: reactToCommunityPost
+      tags: [CommunityPosts]
+      summary: Reaccionar a un post de comunidad
+      description: "Quién puede ejecutarla: **member** (usuario autenticado)."
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReactionInput'
+      responses:
+        '200':
+          description: Reacción registrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Reaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Post de comunidad no encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  parameters:
+    PageCursor:
+      name: pageCursor
+      in: query
+      required: false
+      description: Cursor opaco de paginación devuelto por una respuesta anterior.
+      schema:
+        type: string
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Autenticación mediante JWT emitido por la plataforma de identidad compartida
+        (Google Account / Identity Provider, fuera de este bounded context). El token
+        incluye:
+
+        - `sub`: identificador único del actor (`userId`).
+        - `roles`: lista de roles del actor. Roles relevantes en esta API:
+          - `member`: usuario autenticado que sigue canales, comenta, reacciona, etc.
+          - `creator`: usuario autenticado que además es dueño de uno o más canales y
+            puede moderar comentarios/posts de comunidad sobre su propio contenido.
+          - `system`: integraciones server-to-server (consumidores de eventos desde
+            Catálogo, jobs de mantenimiento).
+        - `channelIds`: lista de `channelId` sobre los que el actor tiene rol `creator`,
+          usada para autorizar operaciones de moderación (`pin`, `unpin`, `delete` ajeno,
+          creación de community posts).
+
+        Los endpoints de lectura pública (listar comentarios, ver totales de reacciones,
+        conteo de suscriptores, listar posts de comunidad) no requieren autenticación y
+        se declaran explícitamente con `security: []`. El resto de operaciones requiere
+        como mínimo rol `member`; las de moderación de canal requieren `creator` y que
+        `channelId` esté en `channelIds` del token.
+
+  responses:
+    BadRequest:
+      description: Parámetros o cuerpo de solicitud inválidos.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "El campo 'body' es requerido y no puede superar los 10000 caracteres."
+              details:
+                - field: "body"
+                  issue: "max_length_exceeded"
+              traceId: "3b2a1c4d-5e6f-4789-90ab-cdef12345601"
+    Unauthorized:
+      description: No se proporcionó un token válido para una operación que lo requiere.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Se requiere autenticación para acceder a este recurso."
+              details: []
+              traceId: "3b2a1c4d-5e6f-4789-90ab-cdef12345602"
+    Forbidden:
+      description: El actor autenticado no tiene permisos suficientes para esta operación.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "FORBIDDEN"
+              message: "El actor no tiene el rol requerido (creator) sobre este canal."
+              details: []
+              traceId: "3b2a1c4d-5e6f-4789-90ab-cdef12345603"
+    InternalError:
+      description: Error interno no esperado.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "Ocurrió un error inesperado. Intente nuevamente más tarde."
+              details: []
+              traceId: "3b2a1c4d-5e6f-4789-90ab-cdef12345604"
+
+  schemas:
+    # -----------------------------------------------------------------
+    # Error consistente (RNF-3)
+    # -----------------------------------------------------------------
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              example: "El campo 'body' es requerido."
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  issue:
+                    type: string
+            traceId:
+              type: string
+              format: uuid
+
+    PageInfo:
+      type: object
+      required: [pageSize, hasNextPage]
+      properties:
+        nextPageCursor:
+          type: string
+          nullable: true
+          example: "eyJvZmZzZXQiOjQwfQ=="
+        pageSize:
+          type: integer
+          example: 20
+        hasNextPage:
+          type: boolean
+          example: true
+        totalEstimate:
+          type: integer
+          nullable: true
+          example: 312
+
+    # -----------------------------------------------------------------
+    # RF-A1 — Subscriptions
+    # -----------------------------------------------------------------
+    Subscription:
+      type: object
+      required: [channelId, subscriberUserId, subscribedAt, notificationsEnabled]
+      properties:
+        channelId:
+          type: string
+          format: uuid
+          example: "8a1b2c3d-4e5f-6789-abcd-ef0123456789"
+        subscriberUserId:
+          type: string
+          format: uuid
+          example: "11112222-3333-4444-5555-666677778888"
+        subscribedAt:
+          type: string
+          format: date-time
+          example: "2026-06-01T10:00:00Z"
+        notificationsEnabled:
+          type: boolean
+          default: true
+          description: Si recibe notificaciones de nuevo contenido del canal.
+
+    SubscriptionPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [channelId, channelName, subscribedAt]
+            properties:
+              channelId:
+                type: string
+                format: uuid
+              channelName:
+                type: string
+                example: "Edgardo Ortiz - Diseño de Software"
+              channelAvatarUrl:
+                type: string
+                format: uri
+              subscribedAt:
+                type: string
+                format: date-time
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    SubscriberCount:
+      type: object
+      required: [channelId, subscriberCount]
+      properties:
+        channelId:
+          type: string
+          format: uuid
+        subscriberCount:
+          type: integer
+          minimum: 0
+          example: 45210
+        subscriberCountFormatted:
+          type: string
+          description: Versión abreviada para UI (ej. "45.2K").
+          example: "45.2K"
+
+    # -----------------------------------------------------------------
+    # RF-A2 — Reactions
+    # -----------------------------------------------------------------
+    ReactionInput:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [like, dislike]
+          example: "like"
+      example:
+        type: "like"
+
+    Reaction:
+      type: object
+      required: [catalogItemId, userId, type, createdAt]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [like, dislike]
+        createdAt:
+          type: string
+          format: date-time
+
+    ReactionSummary:
+      type: object
+      required: [catalogItemId, likeCount, dislikeCount]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        likeCount:
+          type: integer
+          minimum: 0
+          example: 3201
+        dislikeCount:
+          type: integer
+          minimum: 0
+          example: 42
+
+    # -----------------------------------------------------------------
+    # RF-A3 — Comments
+    # -----------------------------------------------------------------
+    CommentInput:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          example: "Excelente explicación de bounded contexts, muy clara la separación de responsabilidades."
+      example:
+        body: "Excelente explicación de bounded contexts, muy clara la separación de responsabilidades."
+
+    CommentUpdateInput:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+      example:
+        body: "Excelente explicación, edité para agregar: también recomiendo revisar el libro de Vernon."
+
+    Comment:
+      type: object
+      required: [commentId, catalogItemId, authorUserId, authorDisplayName, body, createdAt, isPinned, replyCount]
+      properties:
+        commentId:
+          type: string
+          format: uuid
+          example: "c3d4e5f6-7890-4abc-9def-0123456789ab"
+        catalogItemId:
+          type: string
+          format: uuid
+        parentCommentId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Presente si este comentario es una respuesta dentro de un thread.
+        authorUserId:
+          type: string
+          format: uuid
+        authorDisplayName:
+          type: string
+          example: "Mariana Pérez"
+        body:
+          type: string
+          example: "Excelente explicación de bounded contexts."
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        isPinned:
+          type: boolean
+          default: false
+        replyCount:
+          type: integer
+          minimum: 0
+          example: 4
+        likeCount:
+          type: integer
+          minimum: 0
+          example: 18
+
+    CommentPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    CommentReportInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [spam, harassment, hate_speech, misinformation, other]
+          example: "spam"
+        details:
+          type: string
+          maxLength: 1000
+          example: "Comentario repetido con enlaces externos sospechosos."
+      example:
+        reason: "spam"
+        details: "Comentario repetido con enlaces externos sospechosos."
+
+    CommentReportAck:
+      type: object
+      required: [reportId, status]
+      properties:
+        reportId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [received]
+          example: "received"
+
+    # -----------------------------------------------------------------
+    # RF-A4 — Notifications
+    # -----------------------------------------------------------------
+    Notification:
+      type: object
+      required: [notificationId, type, isRead, createdAt]
+      properties:
+        notificationId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [new_video, comment_reply, mention, subscriber_milestone]
+          example: "new_video"
+        isRead:
+          type: boolean
+          default: false
+        createdAt:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          description: Datos contextuales según `type` (ej. `catalogItemId`, `channelId`, `commentId`).
+          additionalProperties: true
+          example:
+            channelId: "8a1b2c3d-4e5f-6789-abcd-ef0123456789"
+            catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+
+    NotificationPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    NotificationPreferences:
+      type: object
+      required: [newVideoFromSubscriptions, commentReplies, mentions]
+      properties:
+        newVideoFromSubscriptions:
+          type: boolean
+          default: true
+        commentReplies:
+          type: boolean
+          default: true
+        mentions:
+          type: boolean
+          default: true
+        emailDigest:
+          type: string
+          enum: [none, daily, weekly]
+          default: none
+
+    NotificationPreferencesInput:
+      type: object
+      properties:
+        newVideoFromSubscriptions:
+          type: boolean
+        commentReplies:
+          type: boolean
+        mentions:
+          type: boolean
+        emailDigest:
+          type: string
+          enum: [none, daily, weekly]
+      example:
+        newVideoFromSubscriptions: true
+        commentReplies: true
+        mentions: false
+        emailDigest: "weekly"
+
+    # -----------------------------------------------------------------
+    # RF-A5 — History
+    # -----------------------------------------------------------------
+    WatchHistoryEntry:
+      type: object
+      required: [historyEntryId, catalogItemId, title, watchedAt]
+      properties:
+        historyEntryId:
+          type: string
+          format: uuid
+        catalogItemId:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: "Diseño de bounded contexts en sistemas distribuidos"
+        thumbnailUrl:
+          type: string
+          format: uri
+        watchedAt:
+          type: string
+          format: date-time
+        watchedSeconds:
+          type: integer
+          minimum: 0
+          example: 480
+
+    WatchHistoryPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchHistoryEntry'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    WatchLaterInput:
+      type: object
+      required: [catalogItemId]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+      example:
+        catalogItemId: "c2f1a4b0-1234-4a9b-8c3d-9a8b7c6d5e4f"
+
+    WatchLaterItem:
+      type: object
+      required: [catalogItemId, title, addedAt]
+      properties:
+        catalogItemId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        thumbnailUrl:
+          type: string
+          format: uri
+        addedAt:
+          type: string
+          format: date-time
+
+    WatchLaterPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchLaterItem'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
+
+    # -----------------------------------------------------------------
+    # RF-A6 — Community posts
+    # -----------------------------------------------------------------
+    CommunityPostInput:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [text, poll, image]
+          example: "text"
+        text:
+          type: string
+          minLength: 1
+          maxLength: 3000
+          example: "¡Nuevo video la próxima semana sobre Event Sourcing! ¿Qué tema les gustaría que cubra después?"
+        imageUrls:
+          type: array
+          items:
+            type: string
+            format: uri
+          maxItems: 4
+          description: Requerido y relevante solo si `type` es `image`.
+        poll:
+          type: object
+          nullable: true
+          description: Requerido si `type` es `poll`.
+          required: [question, options]
+          properties:
+            question:
+              type: string
+              maxLength: 300
+              example: "¿Qué tema prefieren para el próximo video?"
+            options:
+              type: array
+              minItems: 2
+              maxItems: 5
+              items:
+                type: string
+                maxLength: 100
+              example: ["Event Sourcing", "CQRS", "Sagas"]
+      example:
+        type: "poll"
+        text: "¿Qué tema prefieren para el próximo video?"
+        poll:
+          question: "¿Qué tema prefieren para el próximo video?"
+          options: ["Event Sourcing", "CQRS", "Sagas"]
+
+    CommunityPost:
+      type: object
+      required: [postId, channelId, type, text, createdAt]
+      properties:
+        postId:
+          type: string
+          format: uuid
+        channelId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [text, poll, image]
+        text:
+          type: string
+        imageUrls:
+          type: array
+          items:
+            type: string
+            format: uri
+        poll:
+          type: object
+          nullable: true
+          properties:
+            question:
+              type: string
+            options:
+              type: array
+              items:
+                type: object
+                properties:
+                  text:
+                    type: string
+                  voteCount:
+                    type: integer
+                    minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        commentCount:
+          type: integer
+          minimum: 0
+          example: 56
+        likeCount:
+          type: integer
+          minimum: 0
+          example: 1024
+
+    CommunityPostPage:
+      type: object
+      required: [items, pageInfo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommunityPost'
+        pageInfo:
+          $ref: '#/components/schemas/PageInfo'
