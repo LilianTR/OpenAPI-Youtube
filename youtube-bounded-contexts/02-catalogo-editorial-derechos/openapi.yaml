@@ -30,15 +30,15 @@ security:
 
 tags:
   - name: channels
-    description: Gestión de canales y su información pública (RF-C1)
+    description: Gestión de canales y su información pública # (RF-C1)
   - name: catalog-items
-    description: Creación, edición y publicación de contenido editorial (RF-C2, RF-C3)
+    description: Creación, edición y publicación de contenido editorial # (RF-C2, RF-C3)
   - name: playlists
-    description: Colecciones ordenadas de contenido (RF-C4)
+    description: Colecciones ordenadas de contenido # (RF-C4)
   - name: rights
-    description: Reclamaciones de derechos sobre contenido (RF-C5)
+    description: Reclamaciones de derechos sobre contenido # (RF-C5)
   - name: policies
-    description: Políticas, restricciones y moderación (RF-C6)
+    description: Políticas, restricciones y moderación # (RF-C6)
 
 paths:
 
@@ -48,7 +48,7 @@ paths:
     post:
       tags: [channels]
       operationId: createChannel
-      summary: Crear un canal asociado a un creador (RF-C1)
+      summary: Crear un canal asociado a un creador # (RF-C1)
       requestBody:
         required: true
         content:
@@ -73,7 +73,7 @@ paths:
     get:
       tags: [channels]
       operationId: getChannel
-      summary: Consultar información pública del canal (RF-C1)
+      summary: Consultar información pública del canal # (RF-C1)
       security: []   # Endpoint público, no requiere autenticación
       responses:
         '200':
@@ -87,7 +87,7 @@ paths:
     patch:
       tags: [channels]
       operationId: updateChannel
-      summary: Actualizar información del canal (RF-C1)
+      summary: Actualizar información del canal # (RF-C1)
       requestBody:
         required: true
         content:
@@ -137,7 +137,7 @@ paths:
     post:
       tags: [catalog-items]
       operationId: createCatalogItem
-      summary: Vincular asset técnico con metadata editorial (RF-C2)
+      summary: Vincular asset técnico con metadata editorial # (RF-C2)
       description: |
         Recibe el `videoAssetId` de Publicación y los datos editoriales.
         El ítem se crea en estado `draft` por defecto.
@@ -165,7 +165,7 @@ paths:
     get:
       tags: [catalog-items]
       operationId: getCatalogItem
-      summary: Consultar un ítem de catálogo (RF-C2)
+      summary: Consultar un ítem de catálogo # (RF-C2)
       security: []
       responses:
         '200':
@@ -179,7 +179,7 @@ paths:
     patch:
       tags: [catalog-items]
       operationId: updateCatalogItem
-      summary: Editar metadata editorial de un ítem (RF-C2)
+      summary: Editar metadata editorial de un ítem # (RF-C2)
       requestBody:
         required: true
         content:
@@ -204,7 +204,7 @@ paths:
     post:
       tags: [catalog-items]
       operationId: publishCatalogItem
-      summary: Publicar un contenido (RF-C3)
+      summary: Publicar un contenido # (RF-C3)
       description: |
         Hace el contenido visible según las reglas de visibilidad definidas.
         Emite el evento `ContentPublished` hacia Descubrimiento, Monetización y Publicidad.
@@ -231,7 +231,7 @@ paths:
     post:
       tags: [catalog-items]
       operationId: unpublishCatalogItem
-      summary: Despublicar u ocultar contenido (RF-C3)
+      summary: Despublicar u ocultar contenido # (RF-C3)
       description: |
         Retira el contenido de la vista pública.
         Emite el evento `ContentUnpublished` hacia contextos consumidores.
@@ -259,7 +259,7 @@ paths:
     get:
       tags: [catalog-items]
       operationId: checkVisibility
-      summary: Verificar visibilidad de un ítem para un usuario dado (RF-C3)
+      summary: Verificar visibilidad de un ítem para un usuario dado # (RF-C3)
       description: |
         Consulta síncrona utilizada por otros contextos (Descubrimiento, Publicidad)
         para validar si un ítem es visible según país, edad del usuario y
@@ -298,7 +298,7 @@ paths:
     post:
       tags: [playlists]
       operationId: createPlaylist
-      summary: Crear una colección ordenada de contenidos (RF-C4)
+      summary: Crear una colección ordenada de contenidos # (RF-C4)
       requestBody:
         required: true
         content:
@@ -323,7 +323,7 @@ paths:
     get:
       tags: [playlists]
       operationId: getPlaylist
-      summary: Consultar una playlist con su orden (RF-C4)
+      summary: Consultar una playlist con su orden # (RF-C4)
       security: []
       parameters:
         - $ref: '#/components/parameters/page'
@@ -340,7 +340,7 @@ paths:
     delete:
       tags: [playlists]
       operationId: deletePlaylist
-      summary: Eliminar una playlist (RF-C4)
+      summary: Eliminar una playlist # (RF-C4)
       responses:
         '204':
           description: Playlist eliminada
@@ -357,7 +357,7 @@ paths:
     post:
       tags: [playlists]
       operationId: addItemToPlaylist
-      summary: Agregar ítem a una playlist (RF-C4)
+      summary: Agregar ítem a una playlist # (RF-C4)
       requestBody:
         required: true
         content:
@@ -387,7 +387,7 @@ paths:
     delete:
       tags: [playlists]
       operationId: removeItemFromPlaylist
-      summary: Quitar ítem de una playlist (RF-C4)
+      summary: Quitar ítem de una playlist # (RF-C4)
       responses:
         '200':
           description: Ítem removido; playlist actualizada
@@ -406,7 +406,7 @@ paths:
     put:
       tags: [playlists]
       operationId: reorderPlaylist
-      summary: Reordenar todos los ítems de una playlist (RF-C4)
+      summary: Reordenar todos los ítems de una playlist # (RF-C4)
       description: |
         Recibe la lista completa de `catalogItemId` en el nuevo orden deseado.
         Reemplazar un ítem a la vez con `newPosition` es frágil ante
@@ -435,7 +435,7 @@ paths:
     post:
       tags: [rights]
       operationId: createRightsClaim
-      summary: Registrar una reclamación de derechos (RF-C5)
+      summary: Registrar una reclamación de derechos # (RF-C5)
       description: |
         Si `autoRestrictContent` es true, el sistema aplica automáticamente
         una restricción de visibilidad al ítem y emite el evento
@@ -464,7 +464,7 @@ paths:
     get:
       tags: [rights]
       operationId: listRightsClaims
-      summary: Listar reclamaciones sobre un ítem de catálogo (RF-C5)
+      summary: Listar reclamaciones sobre un ítem de catálogo # (RF-C5)
       parameters:
         - $ref: '#/components/parameters/page'
         - $ref: '#/components/parameters/pageSize'
@@ -493,7 +493,7 @@ paths:
     get:
       tags: [rights]
       operationId: getRightsClaim
-      summary: Consultar una reclamación de derechos (RF-C5)
+      summary: Consultar una reclamación de derechos # (RF-C5)
       responses:
         '200':
           description: Detalle de la reclamación
@@ -506,7 +506,7 @@ paths:
     patch:
       tags: [rights]
       operationId: resolveRightsClaim
-      summary: Resolver una reclamación (aceptar, disputar, retirar) (RF-C5)
+      summary: Resolver una reclamación (aceptar, disputar, retirar) # (RF-C5)
       description: |
         Al resolver una reclamación se emite el evento `RightsClaimResolved`.
         Si la resolución es `withdrawn` o `disputed`, se puede levantar
@@ -537,7 +537,7 @@ paths:
     get:
       tags: [policies]
       operationId: getContentPolicy
-      summary: Consultar estado de moderación y política actual (RF-C6)
+      summary: Consultar estado de moderación y política actual # (RF-C6)
       description: |
         Devuelve el estado consolidado de moderación y las restricciones
         vigentes del ítem. Equivale al "estado de política actual" que
@@ -559,7 +559,7 @@ paths:
     post:
       tags: [policies]
       operationId: applyRestriction
-      summary: Aplicar una restricción de contenido (RF-C6)
+      summary: Aplicar una restricción de contenido # (RF-C6)
       description: |
         Aplica una restricción específica (edad, geo-bloqueo, monetización, etc.).
         Emite el evento `RestrictionApplied`.
@@ -592,7 +592,7 @@ paths:
     delete:
       tags: [policies]
       operationId: liftRestriction
-      summary: Levantar una restricción específica de un contenido (RF-C6)
+      summary: Levantar una restricción específica de un contenido # (RF-C6)
       description: Emite el evento `RestrictionLifted` hacia contextos consumidores.
       responses:
         '200':
@@ -612,7 +612,7 @@ paths:
     get:
       tags: [policies]
       operationId: getPolicyHistory
-      summary: Historial de cambios de política de un contenido (RF-C6)
+      summary: Historial de cambios de política de un contenido # (RF-C6)
       parameters:
         - $ref: '#/components/parameters/page'
         - $ref: '#/components/parameters/pageSize'
