@@ -444,10 +444,10 @@ components:
       properties:
         code:
           type: string
-          example: UPLOAD_NOT_FOUND
+          messexample: "UPLOAD_NOT_FOUND"
         message:
           type: string
-          example: La sesión de subida indicada no existe.
+          messexample: "La sesión de subida indicada no existe."
         details:
           type: object
           additionalProperties: true
@@ -465,12 +465,12 @@ components:
           format: int64
         mimeType:
           type: string
-          example: video/mp4
+          messexample: "video/mp4"
         fileName:
           type: string
         fileHash:
           type: string
-          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          messexample: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           description: |
             Hash SHA-256 del archivo completo calculado por el cliente. 
             Se utiliza como clave de idempotencia para identificar subidas duplicadas.
@@ -560,7 +560,7 @@ components:
       properties:
         label:
           type: string
-          example: 1080p
+          messexample: "1080p"
         bitrate:
           type: integer
         status:
@@ -590,7 +590,7 @@ components:
           type: array
           items:
             type: string
-          example: [360p, 720p, 1080p]
+          messexample: [360p, 720p, 1080p]
         mimeType:
           type: string
         createdAt:
@@ -632,7 +632,7 @@ components:
       properties:
         quality:
           type: string
-          example: 1080p
+          messexample: "1080p"
         url:
           type: string
           format: uri
@@ -659,7 +659,7 @@ components:
         updatedAt:
           type: string
           format: date-time
-          example: "2026-06-22T00:57:02Z"
+          messexample: "2026-06-22T00:57:02Z"
           description: |
             Timestamp generado por el cliente en el momento exacto del evento. 
             Ayuda a ordenar cronológicamente las actualizaciones de la sesión 
