@@ -25,19 +25,20 @@ servers:
   - url: https://api.youtube-platform.internal/catalog/v1
     description: Servidor interno de Catálogo
 
+security:
+  - BearerAuth: []
+
 tags:
   - name: channels
-    description: Gestión de canales y su información pública
+    description: Gestión de canales y su información pública (RF-C1)
   - name: catalog-items
-    description: Creación, edición y publicación de contenido editorial
-  - name: visibility
-    description: Reglas de visibilidad y consulta de acceso
+    description: Creación, edición y publicación de contenido editorial (RF-C2, RF-C3)
   - name: playlists
-    description: Colecciones ordenadas de contenido
+    description: Colecciones ordenadas de contenido (RF-C4)
   - name: rights
-    description: Reclamaciones de derechos y restricciones
+    description: Reclamaciones de derechos sobre contenido (RF-C5)
   - name: policies
-    description: Políticas de contenido y moderación
+    description: Políticas, restricciones y moderación (RF-C6)
 
 paths:
 
@@ -48,8 +49,6 @@ paths:
       tags: [channels]
       operationId: createChannel
       summary: Crear un canal asociado a un creador (RF-C1)
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -75,6 +74,7 @@ paths:
       tags: [channels]
       operationId: getChannel
       summary: Consultar información pública del canal (RF-C1)
+      security: []   # Endpoint público, no requiere autenticación
       responses:
         '200':
           description: Información del canal
@@ -88,8 +88,6 @@ paths:
       tags: [channels]
       operationId: updateChannel
       summary: Actualizar información del canal (RF-C1)
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -103,6 +101,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Channel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /channels/{channelId}/content:
     parameters:
@@ -111,6 +113,7 @@ paths:
       tags: [channels]
       operationId: listChannelContent
       summary: Listar contenido publicado de un canal (RF-C1)
+      security: []   # Público; el filtro de visibilidad lo aplica la lógica interna
       parameters:
         - $ref: '#/components/parameters/page'
         - $ref: '#/components/parameters/pageSize'
@@ -118,7 +121,8 @@ paths:
           name: status
           schema:
             type: string
-            enum: [published, draft, unlisted]
+            enum: [published, unlisted]
+            default: published
       responses:
         '200':
           description: Lista de ítems de catálogo
@@ -137,8 +141,6 @@ paths:
       description: |
         Recibe el `videoAssetId` de Publicación y los datos editoriales.
         El ítem se crea en estado `draft` por defecto.
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -154,6 +156,8 @@ paths:
                 $ref: '#/components/schemas/CatalogItem'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /catalog-items/{catalogItemId}:
     parameters:
@@ -161,10 +165,11 @@ paths:
     get:
       tags: [catalog-items]
       operationId: getCatalogItem
-      summary: Consultar un ítem de catálogo
+      summary: Consultar un ítem de catálogo (RF-C2)
+      security: []
       responses:
         '200':
-          description: Ítem de catálogo
+          description: Ítem de catálogo con restricciones activas
           content:
             application/json:
               schema:
@@ -174,9 +179,7 @@ paths:
     patch:
       tags: [catalog-items]
       operationId: updateCatalogItem
-      summary: Editar metadata editorial (RF-C2)
-      security:
-        - BearerAuth: []
+      summary: Editar metadata editorial de un ítem (RF-C2)
       requestBody:
         required: true
         content:
@@ -190,18 +193,21 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogItem'
-
-  # ── VISIBILITY ────────────────────────────────────────────────────────────
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /catalog-items/{catalogItemId}/publish:
     parameters:
       - $ref: '#/components/parameters/catalogItemId'
     post:
-      tags: [visibility]
+      tags: [catalog-items]
       operationId: publishCatalogItem
       summary: Publicar un contenido (RF-C3)
-      security:
-        - BearerAuth: []
+      description: |
+        Hace el contenido visible según las reglas de visibilidad definidas.
+        Emite el evento `ContentPublished` hacia Descubrimiento, Monetización y Publicidad.
       requestBody:
         content:
           application/json:
@@ -209,11 +215,13 @@ paths:
               $ref: '#/components/schemas/PublishRequest'
       responses:
         '200':
-          description: Contenido publicado
+          description: Contenido publicado; se emite evento ContentPublished
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
 
@@ -221,30 +229,42 @@ paths:
     parameters:
       - $ref: '#/components/parameters/catalogItemId'
     post:
-      tags: [visibility]
+      tags: [catalog-items]
       operationId: unpublishCatalogItem
       summary: Despublicar u ocultar contenido (RF-C3)
-      security:
-        - BearerAuth: []
+      description: |
+        Retira el contenido de la vista pública.
+        Emite el evento `ContentUnpublished` hacia contextos consumidores.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnpublishRequest'
       responses:
         '200':
-          description: Contenido despublicado
+          description: Contenido despublicado; se emite evento ContentUnpublished
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogItem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /catalog-items/{catalogItemId}/visibility-check:
     parameters:
       - $ref: '#/components/parameters/catalogItemId'
     get:
-      tags: [visibility]
+      tags: [catalog-items]
       operationId: checkVisibility
-      summary: Verificar visibilidad para un usuario dado (RF-C3)
+      summary: Verificar visibilidad de un ítem para un usuario dado (RF-C3)
       description: |
         Consulta síncrona utilizada por otros contextos (Descubrimiento, Publicidad)
         para validar si un ítem es visible según país, edad del usuario y
-        estado de moderación.
+        estado de moderación. No requiere autenticación ya que la usan otros servicios.
+      security: []
       parameters:
         - in: query
           name: userId
@@ -252,20 +272,25 @@ paths:
             type: string
         - in: query
           name: country
+          required: true
           schema:
             type: string
             description: Código ISO 3166-1 alpha-2
+            pattern: '^[A-Z]{2}$'
         - in: query
           name: userAgeYears
           schema:
             type: integer
+            minimum: 0
       responses:
         '200':
-          description: Resultado de la verificación
+          description: Resultado de la verificación de visibilidad
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/VisibilityCheckResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   # ── PLAYLISTS ─────────────────────────────────────────────────────────────
 
@@ -274,8 +299,6 @@ paths:
       tags: [playlists]
       operationId: createPlaylist
       summary: Crear una colección ordenada de contenidos (RF-C4)
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -289,6 +312,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /playlists/{playlistId}:
     parameters:
@@ -297,6 +324,10 @@ paths:
       tags: [playlists]
       operationId: getPlaylist
       summary: Consultar una playlist con su orden (RF-C4)
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
       responses:
         '200':
           description: Playlist con ítems ordenados
@@ -304,6 +335,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Playlist'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [playlists]
+      operationId: deletePlaylist
+      summary: Eliminar una playlist (RF-C4)
+      responses:
+        '204':
+          description: Playlist eliminada
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -314,28 +358,23 @@ paths:
       tags: [playlists]
       operationId: addItemToPlaylist
       summary: Agregar ítem a una playlist (RF-C4)
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [catalogItemId, position]
-              properties:
-                catalogItemId:
-                  type: string
-                position:
-                  type: integer
-                  minimum: 0
+              $ref: '#/components/schemas/AddPlaylistItemRequest'
       responses:
-        '200':
-          description: Ítem agregado
+        '201':
+          description: Ítem agregado a la playlist
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /playlists/{playlistId}/items/{catalogItemId}:
     parameters:
@@ -349,39 +388,46 @@ paths:
       tags: [playlists]
       operationId: removeItemFromPlaylist
       summary: Quitar ítem de una playlist (RF-C4)
-      security:
-        - BearerAuth: []
       responses:
         '200':
-          description: Ítem removido
+          description: Ítem removido; playlist actualizada
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Playlist'
-    patch:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /playlists/{playlistId}/reorder:
+    parameters:
+      - $ref: '#/components/parameters/playlistId'
+    put:
       tags: [playlists]
-      operationId: reorderPlaylistItem
-      summary: Reordenar un ítem dentro de la playlist (RF-C4)
-      security:
-        - BearerAuth: []
+      operationId: reorderPlaylist
+      summary: Reordenar todos los ítems de una playlist (RF-C4)
+      description: |
+        Recibe la lista completa de `catalogItemId` en el nuevo orden deseado.
+        Reemplazar un ítem a la vez con `newPosition` es frágil ante
+        peticiones concurrentes; este enfoque es atómico.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [newPosition]
-              properties:
-                newPosition:
-                  type: integer
-                  minimum: 0
+              $ref: '#/components/schemas/ReorderPlaylistRequest'
       responses:
         '200':
-          description: Orden actualizado
+          description: Playlist con el nuevo orden aplicado
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Playlist'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   # ── RIGHTS ────────────────────────────────────────────────────────────────
 
@@ -390,8 +436,10 @@ paths:
       tags: [rights]
       operationId: createRightsClaim
       summary: Registrar una reclamación de derechos (RF-C5)
-      security:
-        - BearerAuth: []
+      description: |
+        Si `autoRestrictContent` es true, el sistema aplica automáticamente
+        una restricción de visibilidad al ítem y emite el evento
+        `ContentRestricted` hacia los contextos consumidores.
       requestBody:
         required: true
         content:
@@ -405,6 +453,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RightsClaim'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /catalog-items/{catalogItemId}/rights-claims:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    get:
+      tags: [rights]
+      operationId: listRightsClaims
+      summary: Listar reclamaciones sobre un ítem de catálogo (RF-C5)
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [open, accepted, disputed, withdrawn]
+      responses:
+        '200':
+          description: Lista de reclamaciones
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RightsClaimList'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /rights-claims/{claimId}:
     parameters:
@@ -416,9 +493,7 @@ paths:
     get:
       tags: [rights]
       operationId: getRightsClaim
-      summary: Consultar una reclamación de derechos
-      security:
-        - BearerAuth: []
+      summary: Consultar una reclamación de derechos (RF-C5)
       responses:
         '200':
           description: Detalle de la reclamación
@@ -426,25 +501,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RightsClaim'
+        '404':
+          $ref: '#/components/responses/NotFound'
     patch:
       tags: [rights]
       operationId: resolveRightsClaim
       summary: Resolver una reclamación (aceptar, disputar, retirar) (RF-C5)
-      security:
-        - BearerAuth: []
+      description: |
+        Al resolver una reclamación se emite el evento `RightsClaimResolved`.
+        Si la resolución es `withdrawn` o `disputed`, se puede levantar
+        la restricción de visibilidad que se aplicó automáticamente.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [resolution]
-              properties:
-                resolution:
-                  type: string
-                  enum: [accepted, disputed, withdrawn]
-                reason:
-                  type: string
+              $ref: '#/components/schemas/ResolveRightsClaimRequest'
       responses:
         '200':
           description: Reclamación resuelta
@@ -452,62 +524,107 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RightsClaim'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   # ── POLICIES ──────────────────────────────────────────────────────────────
 
-  /catalog-items/{catalogItemId}/restrictions:
+  /catalog-items/{catalogItemId}/policy:
     parameters:
       - $ref: '#/components/parameters/catalogItemId'
     get:
       tags: [policies]
-      operationId: getContentRestrictions
-      summary: Consultar restricciones actuales de un contenido (RF-C6)
+      operationId: getContentPolicy
+      summary: Consultar estado de moderación y política actual (RF-C6)
+      description: |
+        Devuelve el estado consolidado de moderación y las restricciones
+        vigentes del ítem. Equivale al "estado de política actual" que
+        pide el enunciado.
+      security: []
       responses:
         '200':
-          description: Restricciones vigentes
+          description: Estado de moderación y restricciones activas
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContentRestrictions'
-    put:
+                $ref: '#/components/schemas/ContentPolicy'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /catalog-items/{catalogItemId}/policy/restrictions:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+    post:
       tags: [policies]
-      operationId: applyContentRestriction
-      summary: Aplicar o actualizar restricciones de contenido (RF-C6)
-      security:
-        - BearerAuth: []
+      operationId: applyRestriction
+      summary: Aplicar una restricción de contenido (RF-C6)
+      description: |
+        Aplica una restricción específica (edad, geo-bloqueo, monetización, etc.).
+        Emite el evento `RestrictionApplied`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ContentRestrictions'
+              $ref: '#/components/schemas/ApplyRestrictionRequest'
       responses:
         '200':
-          description: Restricciones actualizadas
+          description: Restricción aplicada; política actualizada
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ContentRestrictions'
+                $ref: '#/components/schemas/ContentPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
-  /catalog-items/{catalogItemId}/policy-history:
+  /catalog-items/{catalogItemId}/policy/restrictions/{restrictionId}:
+    parameters:
+      - $ref: '#/components/parameters/catalogItemId'
+      - in: path
+        name: restrictionId
+        required: true
+        schema:
+          type: string
+    delete:
+      tags: [policies]
+      operationId: liftRestriction
+      summary: Levantar una restricción específica de un contenido (RF-C6)
+      description: Emite el evento `RestrictionLifted` hacia contextos consumidores.
+      responses:
+        '200':
+          description: Restricción levantada; política actualizada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContentPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /catalog-items/{catalogItemId}/policy/history:
     parameters:
       - $ref: '#/components/parameters/catalogItemId'
     get:
       tags: [policies]
       operationId: getPolicyHistory
-      summary: Historial de estado de política (RF-C6)
-      security:
-        - BearerAuth: []
+      summary: Historial de cambios de política de un contenido (RF-C6)
       parameters:
         - $ref: '#/components/parameters/page'
         - $ref: '#/components/parameters/pageSize'
       responses:
         '200':
-          description: Historial paginado
+          description: Historial paginado de cambios de política
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PolicyHistoryList'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 # ---------------------------------------------------------------------------
 # COMPONENTS
@@ -519,6 +636,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Token JWT emitido por el servicio de identidad
 
   parameters:
     channelId:
@@ -581,7 +699,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: Operación no válida para el estado actual
+      description: Operación no válida para el estado actual del recurso
       content:
         application/json:
           schema:
@@ -595,6 +713,7 @@ components:
       properties:
         code:
           type: string
+          example: ITEM_ALREADY_PUBLISHED
         message:
           type: string
         details:
@@ -611,9 +730,14 @@ components:
           type: string
         name:
           type: string
+          maxLength: 100
         description:
           type: string
+          maxLength: 1000
         thumbnailUrl:
+          type: string
+          format: uri
+        bannerUrl:
           type: string
           format: uri
 
@@ -622,8 +746,10 @@ components:
       properties:
         name:
           type: string
+          maxLength: 100
         description:
           type: string
+          maxLength: 1000
         thumbnailUrl:
           type: string
           format: uri
@@ -669,7 +795,7 @@ components:
           description: Referencia al asset técnico en el contexto de Publicación
         title:
           type: string
-          maxLength: 100
+          maxLength: 200
         description:
           type: string
           maxLength: 5000
@@ -677,19 +803,22 @@ components:
           type: array
           items:
             type: string
-          maxItems: 15
+          maxItems: 30
         categoryId:
           type: string
         thumbnailUrl:
           type: string
           format: uri
+        language:
+          type: string
+          example: es
 
     UpdateCatalogItemRequest:
       type: object
       properties:
         title:
           type: string
-          maxLength: 100
+          maxLength: 200
         description:
           type: string
           maxLength: 5000
@@ -697,11 +826,39 @@ components:
           type: array
           items:
             type: string
+          maxItems: 30
         categoryId:
           type: string
         thumbnailUrl:
           type: string
           format: uri
+        language:
+          type: string
+
+    PublishRequest:
+      type: object
+      properties:
+        visibility:
+          type: string
+          enum: [public, unlisted]
+          default: public
+          description: Nivel de visibilidad al publicar
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Si se especifica, el contenido se publicará en esa fecha/hora
+
+    UnpublishRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [creator_request, policy_violation, rights_claim, system]
+          description: Motivo de la despublicación (requerido para auditoría)
+        notes:
+          type: string
+          description: Notas adicionales opcionales
 
     CatalogItem:
       type: object
@@ -726,9 +883,19 @@ components:
         thumbnailUrl:
           type: string
           format: uri
+        language:
+          type: string
         status:
           type: string
-          enum: [draft, published, unlisted, unpublished, restricted]
+          enum: [draft, published, unlisted, unpublished]
+        visibility:
+          type: string
+          enum: [public, unlisted]
+        activeRestrictions:
+          type: array
+          description: Restricciones de política vigentes sobre este ítem
+          items:
+            $ref: '#/components/schemas/Restriction'
         publishedAt:
           type: string
           format: date-time
@@ -750,14 +917,6 @@ components:
         pagination:
           $ref: '#/components/schemas/Pagination'
 
-    PublishRequest:
-      type: object
-      properties:
-        scheduledAt:
-          type: string
-          format: date-time
-          description: Si se especifica, el contenido se publicará en esa fecha
-
     VisibilityCheckResult:
       type: object
       required: [catalogItemId, isVisible]
@@ -770,7 +929,8 @@ components:
           type: array
           items:
             type: string
-          description: Razones por las que el contenido no es visible (si aplica)
+            enum: [unpublished, geo_blocked, age_restricted, moderation_hold, rights_claim]
+          description: Razones por las que el contenido no es visible (vacío si isVisible=true)
 
     # ── Playlist ──
 
@@ -782,12 +942,37 @@ components:
           type: string
         title:
           type: string
+          maxLength: 150
         description:
           type: string
+          maxLength: 1000
         visibility:
           type: string
           enum: [public, unlisted, private]
           default: public
+
+    AddPlaylistItemRequest:
+      type: object
+      required: [catalogItemId]
+      properties:
+        catalogItemId:
+          type: string
+        position:
+          type: integer
+          minimum: 0
+          description: Posición deseada (0 = inicio). Si se omite, se agrega al final.
+
+    ReorderPlaylistRequest:
+      type: object
+      required: [orderedItemIds]
+      properties:
+        orderedItemIds:
+          type: array
+          description: |
+            Lista completa de catalogItemId en el nuevo orden deseado.
+            Debe contener exactamente los mismos ítems que ya están en la playlist.
+          items:
+            type: string
 
     Playlist:
       type: object
@@ -808,7 +993,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlaylistItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
         createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 
@@ -834,11 +1024,34 @@ components:
           type: string
         claimantId:
           type: string
+          description: Entidad o persona que realiza la reclamación
         claimType:
           type: string
           enum: [copyright, trademark, privacy]
         description:
           type: string
+        autoRestrictContent:
+          type: boolean
+          default: false
+          description: |
+            Si es true, aplica automáticamente una restricción de visibilidad
+            al ítem y emite el evento ContentRestricted (RF-C5).
+
+    ResolveRightsClaimRequest:
+      type: object
+      required: [resolution]
+      properties:
+        resolution:
+          type: string
+          enum: [accepted, disputed, withdrawn]
+        reason:
+          type: string
+        liftRestriction:
+          type: boolean
+          default: false
+          description: |
+            Si es true y la reclamación tenía una restricción asociada,
+            la levanta automáticamente al resolver.
 
     RightsClaim:
       type: object
@@ -860,6 +1073,9 @@ components:
           type: string
         resolution:
           type: string
+        restrictionApplied:
+          type: boolean
+          description: Indica si se aplicó una restricción de visibilidad por esta reclamación
         createdAt:
           type: string
           format: date-time
@@ -867,53 +1083,106 @@ components:
           type: string
           format: date-time
 
+    RightsClaimList:
+      type: object
+      required: [items, pagination]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RightsClaim'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
     # ── Policies ──
 
-    ContentRestrictions:
+    Restriction:
       type: object
+      required: [restrictionId, type, appliedAt]
       properties:
+        restrictionId:
+          type: string
+        type:
+          type: string
+          enum: [age_restriction, geo_block, monetization_limit, moderation_hold]
         minAgeYears:
           type: integer
-          description: Edad mínima requerida para ver el contenido
+          description: Edad mínima (presente si type=age_restriction)
         blockedCountries:
           type: array
           items:
             type: string
-          description: Códigos ISO 3166-1 alpha-2 de países bloqueados
-        allowedCountries:
+            pattern: '^[A-Z]{2}$'
+          description: Países bloqueados (presente si type=geo_block)
+        reason:
+          type: string
+        appliedAt:
+          type: string
+          format: date-time
+
+    ApplyRestrictionRequest:
+      type: object
+      required: [type, reason]
+      properties:
+        type:
+          type: string
+          enum: [age_restriction, geo_block, monetization_limit, moderation_hold]
+        minAgeYears:
+          type: integer
+          minimum: 0
+          description: Requerido si type=age_restriction
+        blockedCountries:
           type: array
           items:
             type: string
-          description: Si se especifica, solo estos países pueden ver el contenido
-        monetizationAllowed:
-          type: boolean
-          default: true
+            pattern: '^[A-Z]{2}$'
+          description: Requerido si type=geo_block
+        reason:
+          type: string
+
+    ContentPolicy:
+      type: object
+      required: [catalogItemId, moderationStatus, activeRestrictions, updatedAt]
+      properties:
+        catalogItemId:
+          type: string
         moderationStatus:
           type: string
           enum: [approved, under_review, restricted, removed]
+          description: Estado de moderación actual del contenido
+        activeRestrictions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Restriction'
+        updatedAt:
+          type: string
+          format: date-time
 
     PolicyHistoryEntry:
       type: object
-      required: [entryId, catalogItemId, changedAt, changedBy]
+      required: [entryId, catalogItemId, changeType, changedAt, changedBy]
       properties:
         entryId:
           type: string
         catalogItemId:
           type: string
+        changeType:
+          type: string
+          enum: [restriction_applied, restriction_lifted, moderation_status_changed, published, unpublished]
         changedAt:
           type: string
           format: date-time
         changedBy:
           type: string
-        changeType:
-          type: string
-          enum: [restriction_applied, restriction_lifted, moderation_status_changed, published, unpublished]
+          description: ID del actor (usuario, sistema, servicio) que realizó el cambio
         previousState:
           type: object
           additionalProperties: true
+          description: Estado de política antes del cambio
         newState:
           type: object
           additionalProperties: true
+          description: Estado de política después del cambio
 
     PolicyHistoryList:
       type: object
