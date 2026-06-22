@@ -25,6 +25,9 @@ servers:
   - url: https://api.youtube-platform.internal/publication/v1
     description: Servidor interno de Publicación
 
+security:
+  - BearerAuth: []
+
 tags:
   - name: uploads
     description: Gestión del ciclo de subida de archivos de video
@@ -37,23 +40,18 @@ tags:
   - name: assets
     description: Consulta de assets técnicos
 
-# ---------------------------------------------------------------------------
-# PATHS
-# ---------------------------------------------------------------------------
 paths:
 
-  # ── UPLOADS ──────────────────────────────────────────────────────────────
+  # ── Subir videos (Uploads) ──────────────────────────────────────────────────────────────
 
   /uploads:
     post:
       tags: [uploads]
       operationId: initiateUpload
-      summary: Iniciar una subida de video (RF-P1)
+      summary: Iniciar una subida de video # (RF-P1)
       description: |
         Crea una sesión de subida y devuelve un `uploadId` junto con la URL
         o instrucciones para enviar el archivo. El creador debe estar autenticado.
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -78,24 +76,20 @@ paths:
     get:
       tags: [uploads]
       operationId: getUploadStatus
-      summary: Consultar estado de progreso de la subida (RF-P1)
-      security:
-        - BearerAuth: []
+      summary: Consultar estado de progreso de la subida # (RF-P1)
       responses:
         '200':
-          description: Estado actual de la subida
+          description: Estado actual de la subida con progreso
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UploadSession'
+                $ref: '#/components/schemas/UploadStatus'
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
       tags: [uploads]
       operationId: cancelUpload
-      summary: Cancelar una subida en curso (RF-P1)
-      security:
-        - BearerAuth: []
+      summary: Cancelar una subida en curso # (RF-P1)
       responses:
         '204':
           description: Subida cancelada exitosamente
@@ -110,12 +104,10 @@ paths:
     put:
       tags: [uploads]
       operationId: uploadFileChunk
-      summary: Subir archivo completo o por partes (RF-P1)
+      summary: Subir archivo completo o por partes # (RF-P1)
       description: |
         Envía el contenido binario del video. Soporta subida completa o
         por chunks usando el header `Content-Range`.
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -153,9 +145,7 @@ paths:
     get:
       tags: [processing]
       operationId: getProcessingStatus
-      summary: Consultar estado del procesamiento (RF-P2)
-      security:
-        - BearerAuth: []
+      summary: Consultar estado del procesamiento # (RF-P2)
       responses:
         '200':
           description: Estado del procesamiento
@@ -172,9 +162,7 @@ paths:
     post:
       tags: [processing]
       operationId: retryProcessing
-      summary: Reintentar procesamiento fallido (RF-P2)
-      security:
-        - BearerAuth: []
+      summary: Reintentar procesamiento fallido # (RF-P2)
       responses:
         '202':
           description: Reintento encolado
@@ -193,12 +181,10 @@ paths:
     get:
       tags: [playback]
       operationId: getPlaybackInfo
-      summary: Obtener información de reproducción (RF-P3)
+      summary: Obtener información de reproducción # (RF-P3)
       description: |
         Devuelve URLs de stream adaptadas a dispositivo, ancho de banda y región.
         Inicia internamente una sesión de reproducción.
-      security:
-        - BearerAuth: []
       parameters:
         - in: query
           name: deviceType
@@ -237,12 +223,10 @@ paths:
     patch:
       tags: [playback]
       operationId: updatePlaybackSession
-      summary: Registrar progreso o finalización de reproducción (RF-P3)
+      summary: Registrar progreso o finalización de reproducción # (RF-P3)
       description: |
         Actualiza la sesión con métricas técnicas: posición actual, calidad usada,
         interrupciones y evento de finalización.
-      security:
-        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -265,9 +249,7 @@ paths:
     post:
       tags: [live]
       operationId: createLiveStream
-      summary: Configurar una transmisión en vivo (RF-P4)
-      security:
-        - BearerAuth: []
+      summary: Configurar una transmisión en vivo # (RF-P4)
       requestBody:
         required: true
         content:
@@ -294,9 +276,7 @@ paths:
     get:
       tags: [live]
       operationId: getLiveStream
-      summary: Consultar estado de una transmisión en vivo (RF-P4)
-      security:
-        - BearerAuth: []
+      summary: Consultar estado de una transmisión en vivo # (RF-P4)
       responses:
         '200':
           description: Detalle de la transmisión
@@ -317,9 +297,7 @@ paths:
     put:
       tags: [live]
       operationId: updateLiveStreamState
-      summary: Iniciar, pausar o finalizar una transmisión (RF-P4)
-      security:
-        - BearerAuth: []
+      summary: Iniciar, pausar o finalizar una transmisión # (RF-P4)
       requestBody:
         required: true
         content:
@@ -351,9 +329,7 @@ paths:
     get:
       tags: [assets]
       operationId: listAssets
-      summary: Listar assets técnicos de un creador (RF-P5)
-      security:
-        - BearerAuth: []
+      summary: Listar assets técnicos de un creador # (RF-P5)
       parameters:
         - in: query
           name: creatorId
@@ -376,9 +352,7 @@ paths:
     get:
       tags: [assets]
       operationId: getAsset
-      summary: Consultar detalle técnico de un asset (RF-P5)
-      security:
-        - BearerAuth: []
+      summary: Consultar detalle técnico de un asset # (RF-P5)
       responses:
         '200':
           description: Detalle del asset
@@ -482,7 +456,7 @@ components:
 
     InitiateUploadRequest:
       type: object
-      required: [creatorId, fileSizeBytes, mimeType]
+      required: [creatorId, fileSizeBytes, mimeType, fileHash]
       properties:
         creatorId:
           type: string
@@ -494,6 +468,12 @@ components:
           example: video/mp4
         fileName:
           type: string
+        fileHash:
+          type: string
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          description: |
+            Hash SHA-256 del archivo completo calculado por el cliente. 
+            Se utiliza como clave de idempotencia para identificar subidas duplicadas.
 
     UploadSession:
       type: object
@@ -518,6 +498,34 @@ components:
         createdAt:
           type: string
           format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UploadStatus:
+      type: object
+      required: [uploadId, status]
+      description: Estado de progreso de una subida en curso
+      properties:
+        uploadId:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, completed, cancelled, failed]
+        bytesReceived:
+          type: integer
+          format: int64
+        totalBytes:
+          type: integer
+          format: int64
+        progressPercent:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        videoAssetId:
+          type: string
+          description: Disponible solo cuando status=completed
         updatedAt:
           type: string
           format: date-time
@@ -636,6 +644,7 @@ components:
 
     PlaybackSessionUpdate:
       type: object
+      required: [event]
       properties:
         currentPositionSeconds:
           type: number
@@ -647,6 +656,14 @@ components:
         event:
           type: string
           enum: [progress, completed, abandoned]
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-06-22T00:57:02Z"
+          description: |
+            Timestamp generado por el cliente en el momento exacto del evento. 
+            Ayuda a ordenar cronológicamente las actualizaciones de la sesión 
+            en el backend y mitigar problemas de latencia de red.
 
     PlaybackSession:
       type: object
@@ -685,6 +702,7 @@ components:
           type: string
         title:
           type: string
+          description: Título técnico interno para identificar el stream
         scheduledStartAt:
           type: string
           format: date-time
