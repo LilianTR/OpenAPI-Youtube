@@ -17,7 +17,12 @@ info:
     técnico más allá de su `videoAssetId` de referencia.
 
     ## Integración con otros contextos
-    - Consume el evento `AssetReadyForPublication` de **Publicación**.
+    - Consume el evento `AssetReadyForPublication` de **Publicación** (contiene
+      `videoAssetId` y `creatorId`). Al recibirlo, este contexto puede crear
+      el ítem editorial correspondiente en estado `draft`.
+    - Antes de crear un ítem, verifica síncronamente vía
+      `GET /assets/{videoAssetId}` en **Publicación** que `processingStatus = completed`.
+      Si el asset no está listo, rechaza la creación con `409 Conflict`.
     - Emite `ContentPublished`, `ContentUnpublished`, `ContentRestricted` consumidos
       por **Descubrimiento**, **Monetización** y **Publicidad**.
 
@@ -141,6 +146,11 @@ paths:
       description: |
         Recibe el `videoAssetId` de Publicación y los datos editoriales.
         El ítem se crea en estado `draft` por defecto.
+
+        **Validación síncrona previa:** antes de crear el ítem, este contexto
+        consulta `GET /assets/{videoAssetId}` en **Publicación** para verificar
+        que `processingStatus = completed`. Si el asset no existe o su estado
+        no es `completed`, se rechaza la operación con `409 Conflict`.
       requestBody:
         required: true
         content:
@@ -158,6 +168,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: El asset no existe en Publicación o su processingStatus no es completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /catalog-items/{catalogItemId}:
     parameters:
