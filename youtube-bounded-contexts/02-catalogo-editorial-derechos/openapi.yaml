@@ -713,7 +713,7 @@ components:
       properties:
         code:
           type: string
-          messexample: "ITEM_ALREADY_PUBLISHED"
+          example: "ITEM_ALREADY_PUBLISHED"
         message:
           type: string
         details:
@@ -811,7 +811,7 @@ components:
           format: uri
         language:
           type: string
-          messexample: "es"
+          example: "es"
 
     UpdateCatalogItemRequest:
       type: object
