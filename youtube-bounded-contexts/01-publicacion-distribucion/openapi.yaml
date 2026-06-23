@@ -17,7 +17,11 @@ info:
     metadata visible (título, descripción, tags).
 
     ## Integración con otros contextos
-    - Notifica a **Catálogo** cuando el asset está técnicamente listo para publicar.
+    - Emite el evento `AssetReadyForPublication` (con `videoAssetId` y `creatorId`)
+      cuando el procesamiento termina con éxito. **Catálogo** lo consume para
+      habilitar la creación de ítems editoriales sobre ese asset.
+    - Expone `GET /assets/{videoAssetId}` para que **Catálogo** verifique
+      síncronamente que `processingStatus = completed` antes de crear un ítem.
     - Recibe desde clientes/orquestadores solicitudes de reproducción.
     - Emite sesiones completadas consumidas por **Descubrimiento** como señales.
 
@@ -42,7 +46,7 @@ tags:
 
 paths:
 
-  # ── Subir videos (Uploads) ─────────────────────────────────────────────────────────────
+  # ── Subir videos (Uploads) ──────────────────────────────────────────────────────────────
 
   /uploads:
     post:
@@ -79,11 +83,11 @@ paths:
       summary: Consultar estado de progreso de la subida # (RF-P1)
       responses:
         '200':
-          description: Estado actual de la subida con progreso
+          description: Estado actual de la subida
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UploadStatus'
+                $ref: '#/components/schemas/UploadSession'
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
@@ -323,6 +327,49 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  # ── NOTIFICACIÓN A CATÁLOGO ─────────────────────────────────────────────
+
+  /assets/{videoAssetId}/notify-ready:
+    parameters:
+      - $ref: '#/components/parameters/videoAssetId'
+    post:
+      tags: [assets]
+      operationId: notifyAssetReady
+      summary: Notificar que un asset está listo para publicación editorial
+      description: |
+        Endpoint interno llamado por el pipeline de procesamiento cuando
+        `processingStatus = completed`. Desencadena el evento asíncrono
+        `AssetReadyForPublication` hacia **Catálogo**, incluyendo el
+        `videoAssetId` y `creatorId` para que Catálogo pueda crear el
+        ítem editorial correspondiente.
+
+        **Solo puede ser llamado por servicios internos del sistema (`system`).**
+      responses:
+        '202':
+          description: Notificación aceptada; evento AssetReadyForPublication emitido
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [videoAssetId, eventEmitted]
+                properties:
+                  videoAssetId:
+                    type: string
+                  eventEmitted:
+                    type: string
+                    example: "AssetReadyForPublication"
+                  emittedAt:
+                    type: string
+                    format: date-time
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: El asset no está en estado completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   # ── ASSETS ───────────────────────────────────────────────────────────────
 
   /assets:
@@ -444,10 +491,10 @@ components:
       properties:
         code:
           type: string
-          messexample: "UPLOAD_NOT_FOUND"
+          example: UPLOAD_NOT_FOUND
         message:
           type: string
-          messexample: "La sesión de subida indicada no existe."
+          example: La sesión de subida indicada no existe.
         details:
           type: object
           additionalProperties: true
@@ -465,12 +512,12 @@ components:
           format: int64
         mimeType:
           type: string
-          messexample: "video/mp4"
+          example: video/mp4
         fileName:
           type: string
         fileHash:
           type: string
-          messexample: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           description: |
             Hash SHA-256 del archivo completo calculado por el cliente. 
             Se utiliza como clave de idempotencia para identificar subidas duplicadas.
@@ -498,34 +545,6 @@ components:
         createdAt:
           type: string
           format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    UploadStatus:
-      type: object
-      required: [uploadId, status]
-      description: Estado de progreso de una subida en curso
-      properties:
-        uploadId:
-          type: string
-        status:
-          type: string
-          enum: [pending, in_progress, completed, cancelled, failed]
-        bytesReceived:
-          type: integer
-          format: int64
-        totalBytes:
-          type: integer
-          format: int64
-        progressPercent:
-          type: number
-          format: float
-          minimum: 0
-          maximum: 100
-        videoAssetId:
-          type: string
-          description: Disponible solo cuando status=completed
         updatedAt:
           type: string
           format: date-time
@@ -560,7 +579,7 @@ components:
       properties:
         label:
           type: string
-          messexample: "1080p"
+          example: 1080p
         bitrate:
           type: integer
         status:
@@ -590,7 +609,7 @@ components:
           type: array
           items:
             type: string
-          messexample: [360p, 720p, 1080p]
+          example: [360p, 720p, 1080p]
         mimeType:
           type: string
         createdAt:
@@ -632,7 +651,7 @@ components:
       properties:
         quality:
           type: string
-          messexample: "1080p"
+          example: 1080p
         url:
           type: string
           format: uri
@@ -644,7 +663,6 @@ components:
 
     PlaybackSessionUpdate:
       type: object
-      required: [event]
       properties:
         currentPositionSeconds:
           type: number
@@ -659,7 +677,7 @@ components:
         updatedAt:
           type: string
           format: date-time
-          messexample: "2026-06-22T00:57:02Z"
+          example: "2026-06-22T00:57:02Z"
           description: |
             Timestamp generado por el cliente en el momento exacto del evento. 
             Ayuda a ordenar cronológicamente las actualizaciones de la sesión 
@@ -696,13 +714,12 @@ components:
 
     CreateLiveStreamRequest:
       type: object
-      required: [creatorId, title]
+      required: [creatorId, InternalName] # Titulo tecnico interno para stream
       properties:
         creatorId:
           type: string
         title:
           type: string
-          description: Título técnico interno para identificar el stream
         scheduledStartAt:
           type: string
           format: date-time
